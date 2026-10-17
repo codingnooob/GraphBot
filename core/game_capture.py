@@ -120,14 +120,16 @@ def auto_crop_white_grid(bgr, params=None):
 
 
 def resize_to_grid(bgr, target_width, target_height):
-    """Resize isotropically into the target canvas, padding with white.
+    """Resize isotropically to fill the target canvas, center-cropping overflow.
 
     Preserves cell dimensions (no anisotropic distortion) and keeps the grid
     centered so the game origin (0,0) remains at the canvas center, matching
-    the target UI grid.
+    the target UI grid. The graph fills the entire canvas with no padding;
+    any overflow beyond the target dimensions is cropped symmetrically from
+    the center so the origin stays aligned.
     """
     height, width = bgr.shape[:2]
-    scale = min(target_width / width, target_height / height)
+    scale = max(target_width / width, target_height / height)
     new_w = max(1, int(round(width * scale)))
     new_h = max(1, int(round(height * scale)))
     interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
@@ -135,7 +137,16 @@ def resize_to_grid(bgr, target_width, target_height):
     canvas = np.full((target_height, target_width, 3), 255, dtype=np.uint8)
     top = (target_height - new_h) // 2
     left = (target_width - new_w) // 2
-    canvas[top : top + new_h, left : left + new_w] = resized
+    src_top = max(0, -top)
+    src_left = max(0, -left)
+    dst_top = max(0, top)
+    dst_left = max(0, left)
+    copy_h = min(new_h - src_top, target_height - dst_top)
+    copy_w = min(new_w - src_left, target_width - dst_left)
+    if copy_h > 0 and copy_w > 0:
+        canvas[dst_top : dst_top + copy_h, dst_left : dst_left + copy_w] = resized[
+            src_top : src_top + copy_h, src_left : src_left + copy_w
+        ]
     return canvas
 
 
