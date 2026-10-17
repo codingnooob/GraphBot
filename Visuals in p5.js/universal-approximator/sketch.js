@@ -24,6 +24,7 @@ const CANVAS_HEIGHT = CANVAS_WIDTH / ASPECT;
 const DEFAULT_PARAMS = {
   inputMode: "click",
   autoDetectActive: true,
+  autoDetectEnemies: true,
   drawForwardOnly: false,
   approxMethod: "sigmoid",
   sampleStep: 0.5,
@@ -123,6 +124,7 @@ let forbiddenStats = null;
 let forbiddenError = null;
 let activeAnchor = null;
 let capturedActiveAnchor = null;
+let capturedEnemyTargets = [];
 
 function clonePoint(point) {
   return { x: Number(point.x), y: Number(point.y) };
@@ -166,6 +168,27 @@ function applyActiveDetectionPreference() {
   }
   updateStatusPanel();
   updateCopyButton();
+}
+
+function applyEnemyDetectionPreference() {
+  if (params.inputMode === "dot") {
+    dotPoints = activeAnchor ? [clonePoint(anchorPoint())] : [];
+  } else if (params.inputMode === "click") {
+    clickPoints = activeAnchor ? [clonePoint(anchorPoint())] : [];
+  }
+  if (params.autoDetectEnemies && capturedEnemyTargets.length) {
+    const points = capturedEnemyTargets
+      .map((target) => ({
+        x: constrain(Number(target?.game?.x), X_MIN, X_MAX),
+        y: constrain(Number(target?.game?.y), Y_MIN, Y_MAX),
+      }))
+      .sort((a, b) => a.x - b.x);
+    if (params.inputMode === "dot") dotPoints.push(...points);
+    else if (params.inputMode === "click") clickPoints.push(...points);
+  }
+  updateStatusPanel();
+  updateCopyButton();
+  updateDotButtons();
 }
 
 function anchorStatusText() {
@@ -439,6 +462,7 @@ function buildControlsPanel() {
         ${actionButton("btn-dot-stop", "Stop", { secondary: true })}
         ${actionButton("btn-dot-undo", "Undo point", { secondary: true })}
         ${actionButton("btn-dot-clear", "Clear points", { secondary: true })}
+${actionButton("btn-dot-add-enemies", "Add detected enemies", { secondary: true })}
         ${trainingRecordingEnabled ? actionButton("btn-record-trajectory", "Record generations", { secondary: true }) : ""}
       </div>
     </div>
@@ -488,6 +512,7 @@ function buildControlsPanel() {
     <h2>Parameters</h2>
     ${actionButton("btn-capture-field", "Capture field")}
     ${controlCheckbox("autoDetectActive", "Auto-detect active player", params.autoDetectActive, "Finds the player's yellow body and circular active marker after capture. Disable it to place the purple A marker manually.")}
+  ${controlCheckbox("autoDetectEnemies", "Auto-detect enemy targets", params.autoDetectEnemies, "After capture, adds detected right-side enemies as targets, ordered left to right. Disable to place targets manually.")}
     ${controlInputModePicker()}
     ${modeSpecificControls}
     ${actionButton("btn-reset", "Reset all", { secondary: true })}
@@ -526,8 +551,13 @@ function buildControlsPanel() {
   if (dotStopBtn) dotStopBtn.addEventListener("click", stopDotEvolution);
   const dotUndoBtn = document.getElementById("btn-dot-undo");
   if (dotUndoBtn) dotUndoBtn.addEventListener("click", undoLastDotPoint);
-  const dotClearBtn = document.getElementById("btn-dot-clear");
-  if (dotClearBtn) dotClearBtn.addEventListener("click", clearDotPoints);
+const dotClearBtn = document.getElementById("btn-dot-clear");
+if (dotClearBtn) dotClearBtn.addEventListener("click", clearDotPoints);
+const dotAddEnemiesBtn = document.getElementById("btn-dot-add-enemies");
+if (dotAddEnemiesBtn) dotAddEnemiesBtn.addEventListener("click", () => {
+  params.autoDetectEnemies = true;
+  applyEnemyDetectionPreference();
+});
   document.getElementById("btn-reset").addEventListener("click", resetParams);
   copyBtnEl = document.getElementById("btn-copy-formula");
   copyBtnEl.addEventListener("click", (event) => {
@@ -845,6 +875,13 @@ function onParamChange(event) {
     return;
   }
 
+  if (changedKey === "autoDetectEnemies") {
+    applyEnemyDetectionPreference();
+    updateStatusPanel();
+    updateCopyButton();
+    return;
+  }
+
   if (params.inputMode === "dot") {
     if (changedKey === "dotTrajectory") {
       buildControlsPanel();
@@ -917,6 +954,9 @@ function resetParams() {
   clearWorkspaceState({ keepAnchor: false });
   if (params.autoDetectActive && capturedActiveAnchor) {
     setActiveAnchor(capturedActiveAnchor);
+  }
+  if (params.autoDetectEnemies && capturedEnemyTargets.length) {
+    applyEnemyDetectionPreference();
   }
   buildControlsPanel();
   if (params.inputMode === "draw" && drawnPoints.length > 0) rerunPipeline();
@@ -2192,8 +2232,10 @@ async function captureGameField() {
     });
 
     capturedActiveAnchor = data.active_anchor || null;
+    capturedEnemyTargets = Array.isArray(data.detected_enemies) ? data.detected_enemies : [];
     clearWorkspaceState({ keepAnchor: false });
     if (params.autoDetectActive) setActiveAnchor(capturedActiveAnchor);
+    if (params.autoDetectEnemies) applyEnemyDetectionPreference();
     if (data.field_archive) {
       console.info(`[field archive] saved ${data.field_archive.relative_path}`);
     } else if (data.field_archive_error) {
