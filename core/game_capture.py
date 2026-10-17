@@ -12,7 +12,7 @@ import numpy as np
 import win32gui
 import win32ui
 
-from core.detection import find_active_player, load_active_params, load_players_params
+from core.detection import find_active_player, find_all_players, load_active_params, load_players_params
 from core.forbidden_mask import build_forbidden_mask, load_forbidden_params
 from core.field_geometry import pixel_to_game
 from core.field_capture_archive import save_clean_field_capture
@@ -364,6 +364,25 @@ def capture_game_field(
             "needs_review": bool(detection.get("needs_review", True)),
         }
 
+    detected_enemies = []
+    try:
+        enemy_result = find_all_players(bgr, field["width"])
+        enemies = enemy_result.get("enemies", [])
+        for cx, cy, radius in sorted(enemies, key=lambda item: item[0]):
+            gx, gy = field_to_game(cx, cy, field["width"], field["height"])
+            detected_enemies.append(
+                {
+                    "pixel": {
+                        "x": round(float(cx), 4),
+                        "y": round(float(cy), 4),
+                        "radius": round(float(radius), 4),
+                    },
+                    "game": {"x": gx, "y": gy},
+                }
+            )
+    except Exception:
+        detected_enemies = []
+
     forbidden_grid = None
     forbidden_stats = None
     forbidden_error = None
@@ -392,6 +411,7 @@ def capture_game_field(
         "active_norm": active_norm,
         "active_method": active_result.get("method"),
         "active_anchor": active_anchor,
+        "detected_enemies": detected_enemies,
         "forbidden_grid": forbidden_grid,
         "forbidden_stats": forbidden_stats,
         "forbidden_error": forbidden_error,
