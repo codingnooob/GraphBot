@@ -182,6 +182,27 @@ class SigmoidNetwork {
 
     return `y=${parts.join("+")}`;
   }
+
+  supportsDerivative(order) {
+    return order === 1 || order === 2;
+  }
+
+  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
+    if (order !== 1 && order !== 2) return null;
+    const bias = round3(this.bias);
+    const parts = [];
+    for (let i = 0; i < this.numNeurons; i++) {
+      if (!Number.isFinite(this.w[i]) || Math.abs(this.w[i]) < minWeight) continue;
+      const w = round3(this.w[i]);
+      const x0 = round3(this.x0[i]);
+      if (w === null || x0 === null) continue;
+      const k = this.k;
+      const s = `1/(1+exp(-${k}*(x-${x0})))`;
+      if (order === 1) parts.push(`${w}*${k}*${s}*(1-${s})`);
+      else parts.push(`${w}*${k}^2*${s}*(1-${s})*(1-2*${s})`);
+    }
+    return parts.length > 0 ? `y=${parts.join("+")}` : "y=0";
+  }
 }
 
 // Feature MLP: φ(t) → hidden layers → y  (Taylor / Fourier features)
@@ -489,6 +510,26 @@ class FeatureMlpNetwork {
   toDesmosText(minWeight = 0.005) {
     if (this.numHiddenLayers === 0) return this.linearDesmosFromOutputLayer(minWeight);
     return this.mlpDesmosText(minWeight);
+  }
+
+  supportsDerivative(order) {
+    return order === 1 || order === 2;
+  }
+
+  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
+    if (order !== 1 && order !== 2) return null;
+    if (this.numHiddenLayers !== 0 || this.layers.length === 0) return null;
+    if (this instanceof TaylorNetwork) {
+      const coeffs = this.expandedXPowers(minWeight);
+      if (!coeffs) return null;
+      const dcoeffs = derivativeCoeffs(coeffs, order);
+      if (!dcoeffs) return null;
+      return taylorPolyDesmos(dcoeffs, minWeight);
+    }
+    if (this instanceof FourierNetwork) {
+      return fourierLinearDerivativeDesmos(this, order, minWeight);
+    }
+    return null;
   }
 }
 
@@ -831,4 +872,68 @@ function sampleYFromData(data, x) {
   }
 
   return data[data.length - 1].y;
+}
+
+function derivativeCoeffs(coeffs, order) {
+  let c = coeffs.slice();
+  for (let o = 0; o < order; o++) {
+    const next = new Array(c.length).fill(0);
+    for (let i = 1; i < c.length; i++) next[i - 1] = c[i] * i;
+    c = next;
+  }
+  return c;
+}
+function taylorPolyDesmos(coeffs, minWeight) {
+  const parts = [];
+  for (let i = 0; i < coeffs.length; i++) {
+    if (!Number.isFinite(coeffs[i]) || Math.abs(coeffs[i]) < minWeight) continue;
+    const v = round3(coeffs[i]);
+    if (v === null) continue;
+    if (i === 0) parts.push(`${v}`);
+    else if (i === 1) parts.push(`${v}*x`);
+    else parts.push(`${v}*x^${i}`);
+  }
+  return parts.length > 0 ? `y=${parts.join("+")}` : "y=0";
+}
+function fourierLinearDerivativeDesmos(net, order, minWeight) {
+  if (!(net instanceof FourierNetwork) || net.numHiddenLayers !== 0) return null;
+  const inputs = net.featureExprsForDesmos();
+  const last = net.layers[0];
+  const yTerms = [];
+  for (let j = 0; j < last.W[0].length; j++) {
+    if (Math.abs(last.W[0][j]) < minWeight) continue;
+    const w = round3(last.W[0][j]);
+    if (w === null) continue;
+    const expr = inputs[j];
+    if (expr === "1") {
+      if (order >= 1) continue;
+      yTerms.push(`${w}`);
+      continue;
+    }
+    const angMatch = expr.match(/(cos|sin)\((.+)\)/);
+    if (angMatch) {
+      const fn = angMatch[1];
+      const ang = angMatch[2];
+      const coeff = extractAngleCoeff(ang);
+      if (order === 1) {
+        const d = fn === "cos" ? `-sin(${ang})` : `cos(${ang})`;
+        const factor = coeff === 1 ? d : `${coeff}*${d}`;
+        yTerms.push(`${w}*${factor}`);
+      } else if (order === 2) {
+        const c2 = coeff * coeff;
+        yTerms.push(`${w}*(-(${c2})*${expr})`);
+      }
+      continue;
+    }
+    if (expr === net.desmosTVar() && order === 1) yTerms.push(`${w}`);
+  }
+  return yTerms.length > 0 ? `y=${yTerms.join("+")}` : "y=0";
+}
+function extractAngleCoeff(ang) {
+  try {
+    if (ang.indexOf("*") === -1) return 1;
+    const parts = ang.split("*");
+    const v = parseFloat(parts[0]);
+    return Number.isFinite(v) ? v : 1;
+  } catch (e) { return 1; }
 }

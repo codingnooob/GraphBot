@@ -107,6 +107,9 @@ let isDrawing = false;
 let controlsEl;
 let statusMseEl;
 let copyBtnEl;
+let copyYBtnEl;
+let copyY1BtnEl;
+let copyY2BtnEl;
 let captureBtnEl;
 let recordTrainingBtnEl;
 let recordTrajectoryBtnEl;
@@ -508,7 +511,11 @@ ${actionButton("btn-dot-add-enemies", "Add detected enemies", { secondary: true 
   }
 
   controlsEl.innerHTML = `
-    ${actionButton("btn-copy-formula", "Copy y", { disabled: true })}
+    <div class="copy-group">
+      ${actionButton("btn-copy-y", "Copy y", { disabled: true })}
+      ${actionButton("btn-copy-y1", "Copy y'", { disabled: true })}
+      ${actionButton("btn-copy-y2", "Copy y''", { disabled: true })}
+    </div>
     <h2>Parameters</h2>
     ${actionButton("btn-capture-field", "Capture field")}
     ${controlCheckbox("autoDetectActive", "Auto-detect active player", params.autoDetectActive, "Finds the player's yellow body and circular active marker after capture. Disable it to place the purple A marker manually.")}
@@ -559,10 +566,20 @@ if (dotAddEnemiesBtn) dotAddEnemiesBtn.addEventListener("click", () => {
   applyEnemyDetectionPreference();
 });
   document.getElementById("btn-reset").addEventListener("click", resetParams);
-  copyBtnEl = document.getElementById("btn-copy-formula");
-  copyBtnEl.addEventListener("click", (event) => {
+  copyYBtnEl = document.getElementById("btn-copy-y");
+  copyYBtnEl.addEventListener("click", (event) => {
     event.preventDefault();
     copyActiveFormula();
+  });
+  copyY1BtnEl = document.getElementById("btn-copy-y1");
+  copyY1BtnEl.addEventListener("click", (event) => {
+    event.preventDefault();
+    copyDerivative(1);
+  });
+  copyY2BtnEl = document.getElementById("btn-copy-y2");
+  copyY2BtnEl.addEventListener("click", (event) => {
+    event.preventDefault();
+    copyDerivative(2);
   });
   captureBtnEl = document.getElementById("btn-capture-field");
   captureBtnEl.addEventListener("click", (event) => {
@@ -1898,6 +1915,38 @@ function directLineFormula(p1, p2, useGamePrecision = false) {
   return `${dist}*(abs(x - ${x1}) - abs(x - ${x2}))`;
 }
 
+function directLineDerivativeFormula(p1, p2, useGamePrecision = false) {
+  const round = useGamePrecision ? fmtGame : roundCoord;
+  const x1 = round(p1.x);
+  const y1 = round(p1.y);
+  const x2 = round(p2.x);
+  const y2 = round(p2.y);
+  let dx = x2 - x1;
+  if (Math.abs(dx) < 1e-12) {
+    dx = y1 !== y2 ? verticalEps(y1, y2) : VERTICAL_MIN_EPS;
+  }
+  const m = (y2 - y1) / dx;
+  const mr = round(m);
+  if (Math.abs(mr) < 1e-10) return "0";
+  return `${mr}*((sign(x - ${x1}) - sign(x - ${x2}))/2)`;
+}
+
+function waypointsDerivativeFormulaText(waypoints, useGamePrecision = false, includeYPrimePrefix = true, order = 1) {
+  if (waypoints.length < 2) return null;
+  if (order !== 1) {
+    return includeYPrimePrefix ? "y''=0" : "0";
+  }
+  const parts = [];
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    parts.push(directLineDerivativeFormula(waypoints[i], waypoints[i + 1], useGamePrecision));
+  }
+  const body = normalizeFormula(parts.join(" + "));
+  if (!body || body === "0") {
+    return includeYPrimePrefix ? "y'=0" : "0";
+  }
+  return includeYPrimePrefix ? `y'=${body.replace(/^y'=/, "")}` : body;
+}
+
 function waypointsFormulaText(waypoints, useGamePrecision = false, includeYPrefix = true) {
   if (waypoints.length < 2) return null;
   const parts = [];
@@ -1914,6 +1963,13 @@ function linearFormulaText(waypoints, useGamePrecision = false) {
 
 function clickFormulaText(waypoints) {
   return waypointsFormulaText(waypoints, true, false);
+}
+
+function linearDerivativeFormulaText(waypoints, useGamePrecision = false, order = 1) {
+  return waypointsDerivativeFormulaText(waypoints, useGamePrecision, true, order);
+}
+function clickDerivativeFormulaText(waypoints, order = 1) {
+  return waypointsDerivativeFormulaText(waypoints, true, false, order);
 }
 
 function getActiveFormulaText() {
@@ -1946,6 +2002,42 @@ function getActiveFormulaText() {
     );
   } else if (network) {
     formula = network.toDesmosText();
+  }
+  return formula ? normalizeFormula(formula) : null;
+}
+
+function getActiveDerivativeText(order) {
+  if (order !== 1 && order !== 2) return null;
+  if (params.inputMode === "click") {
+    if (clickWaypoints.length < 2) return null;
+    return clickDerivativeFormulaText(clickWaypoints, order);
+  }
+
+  if (params.inputMode === "dot") {
+    const path = dotEvolution?.bestEver?.path;
+    if (!path || path.length < 2) return null;
+    if (params.dotTrajectory === "spline" && typeof CubicSplineModel === "function" && splineModel) {
+      const decimals = Math.max(
+        8,
+        Math.min(14, Math.round(Number(params.splineFormulaPrecision) || 14))
+      );
+      const splineFormula = splineModel.toDerivativeFormulaText(order, decimals);
+      return splineFormula ? splineFormula : null;
+    }
+    return clickDerivativeFormulaText(path, order);
+  }
+
+  if (trainingData.length < 2) return null;
+  let formula = null;
+  if (params.approxMethod === "linear") {
+    formula = linearDerivativeFormulaText(linearWaypoints, false, order);
+  } else if (params.approxMethod === "spline" && splineModel) {
+    formula = splineModel.toDerivativeFormulaText(
+      order,
+      Math.max(8, Math.min(14, Math.round(Number(params.splineFormulaPrecision) || 14)))
+    );
+  } else if (network && typeof network.toDesmosDerivativeText === "function" && network.supportsDerivative(order)) {
+    formula = network.toDesmosDerivativeText(order);
   }
   return formula ? normalizeFormula(formula) : null;
 }
@@ -1998,26 +2090,41 @@ function logActiveFormula() {
 
 async function copyActiveFormula() {
   const formula = getActiveFormulaText();
-  if (!formula || !copyBtnEl) return;
-  const prev = copyBtnEl.textContent;
+  const btn = copyYBtnEl || copyBtnEl;
+  if (!formula || !btn) return;
+  const prev = btn.textContent;
   try {
     await navigator.clipboard.writeText(formula);
-    copyBtnEl.textContent = "Copied";
+    btn.textContent = "Copied";
   } catch {
-    copyBtnEl.textContent = "Error";
+    btn.textContent = "Error";
   }
   setTimeout(() => {
-    if (copyBtnEl) copyBtnEl.textContent = prev;
+    if (btn) btn.textContent = prev;
+  }, 1200);
+}
+
+async function copyDerivative(order) {
+  const formula = getActiveDerivativeText(order);
+  const btn = order === 1 ? copyY1BtnEl : copyY2BtnEl;
+  if (!formula || !btn) return;
+  const prev = btn.textContent;
+  try {
+    await navigator.clipboard.writeText(formula);
+    btn.textContent = "Copied";
+  } catch {
+    btn.textContent = "Error";
+  }
+  setTimeout(() => {
+    if (btn) btn.textContent = prev;
   }, 1200);
 }
 
 function updateCopyButton() {
-  if (!copyBtnEl) return;
-  setActionDisabled(
-    copyBtnEl,
-    getActiveFormulaText() === null,
-    copyUnavailableReason()
-  );
+  if (!copyYBtnEl) return;
+  setActionDisabled(copyYBtnEl, getActiveFormulaText() === null, copyUnavailableReason());
+  if (copyY1BtnEl) setActionDisabled(copyY1BtnEl, getActiveDerivativeText(1) === null, copyUnavailableReason());
+  if (copyY2BtnEl) setActionDisabled(copyY2BtnEl, getActiveDerivativeText(2) === null, copyUnavailableReason());
 }
 
 function updateCaptureButton() {
