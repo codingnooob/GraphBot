@@ -69,6 +69,71 @@ class CubicSplineModel {
   }
 }
 
+function piecewiseCubicFormulaText(intervals, decimals = 14) {
+  if (!intervals || intervals.length === 0) return null;
+  const terms = [];
+  const first = intervals[0];
+  const baseX = splineNumber(first.x, decimals);
+  terms.push(splinePolynomial(first.a, first.b, first.c, first.d, `x - ${baseX}`, decimals));
+
+  for (let i = 1; i < intervals.length; i++) {
+    const jump = intervals[i].d - intervals[i - 1].d;
+    if (Math.abs(jump) < 10 ** (-(decimals + 1))) continue;
+    const knot = splineNumber(intervals[i].x, decimals);
+    const positivePart = `((x - ${knot}) + abs(x - ${knot}))/2`;
+    terms.push(`${splineNumber(jump, decimals)}*(${positivePart})^3`);
+  }
+  return `y=${normalizeSplineFormula(terms.join(" + "))}`;
+}
+
+function piecewiseCubicDerivativeFormulaText(intervals, order = 1, decimals = 14) {
+  if (!intervals || intervals.length === 0) return null;
+  const terms = [];
+  const first = intervals[0];
+  const baseX = splineNumber(first.x, decimals);
+  if (order === 1) {
+    const a1 = first.b;
+    const b1 = 2 * first.c;
+    const c1 = 3 * first.d;
+    terms.push(splinePolynomial(a1, b1, c1, 0, `x - ${baseX}`, decimals));
+    for (let i = 1; i < intervals.length; i++) {
+      const prev = intervals[i - 1];
+      const cur = intervals[i];
+      const t = cur.x - prev.x;
+      const y1_left = prev.b + 2 * prev.c * t + 3 * prev.d * t * t;
+      const y1_right = cur.b;
+      const jump = y1_right - y1_left;
+      if (Math.abs(jump) < 10 ** (-(decimals + 1))) continue;
+      const knot = splineNumber(cur.x, decimals);
+      const positivePart = `((x - ${knot}) + abs(x - ${knot}))/2`;
+      terms.push(`${splineNumber(jump, decimals)}*(${positivePart})`);
+    }
+    return terms.length > 0 ? `y'=${normalizeSplineFormula(terms.join(" + "))}` : null;
+  } else if (order === 2) {
+    const a2 = 2 * first.c;
+    const b2 = 6 * first.d;
+    terms.push(splinePolynomial(a2, b2, 0, 0, `x - ${baseX}`, decimals));
+    for (let i = 1; i < intervals.length; i++) {
+      const prev = intervals[i - 1];
+      const cur = intervals[i];
+      const t = cur.x - prev.x;
+      const y2_left = 2 * prev.c + 6 * prev.d * t;
+      const y2_right = 2 * cur.c;
+      const jump = y2_right - y2_left;
+      if (Math.abs(jump) < 10 ** (-(decimals + 1))) continue;
+      const knot = splineNumber(cur.x, decimals);
+      const positivePart = `((x - ${knot}) + abs(x - ${knot}))/2`;
+      terms.push(`${splineNumber(jump, decimals)}*(${positivePart})`);
+    }
+    return terms.length > 0 ? `y''=${normalizeSplineFormula(terms.join(" + "))}` : null;
+  }
+  return null;
+
+  toDerivativeFormulaText(order = 1, decimals = 14) {
+    return piecewiseCubicDerivativeFormulaText(this.intervals, order, decimals);
+  }
+}
+
 class BSplineModel {
   constructor(data, controlPointCount = 12, smoothing = 0) {
     this.data = data.map((point) => ({ x: Number(point.x), y: Number(point.y) }));
@@ -109,8 +174,6 @@ class BSplineModel {
       }
     }
 
-    // λ=0 is the interpolation/least-squares limit. A tiny diagonal term
-    // keeps the solve stable for sparse or nearly duplicate input points.
     const lambda = this.smoothing * 0.1 + 1e-8;
     for (let i = 0; i < count; i++) normal[i][i] += lambda;
     this.coefficients = solveLinearSystem(normal, rhs);
@@ -163,60 +226,52 @@ class BSplineModel {
   toDerivativeFormulaText(order = 1, decimals = 14) {
     return piecewiseCubicDerivativeFormulaText(this.intervals, order, decimals);
   }
-}
 
-function intervalIndex(intervals, x) {
-  if (x <= intervals[0].x) return 0;
-  for (let i = intervals.length - 1; i >= 0; i--) {
-    if (x >= intervals[i].x) return i;
+  toDerivativeFormulaText(order = 1, decimals = 14) {
+    return piecewiseCubicDerivativeFormulaText(this.intervals, order, decimals);
   }
-  return 0;
-}
-
-function solveLinearSystem(inputMatrix, inputRhs) {
-  const matrix = inputMatrix.map((row, rowIndex) => [
-    ...row.map((value) => (Number.isFinite(value) ? value : 0)),
-    Number.isFinite(inputRhs[rowIndex]) ? inputRhs[rowIndex] : 0,
-  ]);
-  const n = matrix.length;
-  for (let column = 0; column < n; column++) {
-    let pivot = column;
-    for (let row = column + 1; row < n; row++) {
-      if (Math.abs(matrix[row][column]) > Math.abs(matrix[pivot][column])) pivot = row;
+}function piecewiseCubicDerivativeFormulaText(intervals, order = 1, decimals = 14) {
+  if (!intervals || intervals.length === 0) return null;
+  const terms = [];
+  const first = intervals[0];
+  const baseX = splineNumber(first.x, decimals);
+  if (order === 1) {
+    const a1 = first.b;
+    const b1 = 2 * first.c;
+    const c1 = 3 * first.d;
+    terms.push(splinePolynomial(a1, b1, c1, 0, `x - ${baseX}`, decimals));
+    for (let i = 1; i < intervals.length; i++) {
+      const prev = intervals[i - 1];
+      const cur = intervals[i];
+      const t = cur.x - prev.x;
+      const y1_left = prev.b + 2 * prev.c * t + 3 * prev.d * t * t;
+      const y1_right = cur.b;
+      const jump = y1_right - y1_left;
+      if (Math.abs(jump) < 10 ** (-(decimals + 1))) continue;
+      const knot = splineNumber(cur.x, decimals);
+      const positivePart = `((x - ${knot}) + abs(x - ${knot}))/2`;
+      terms.push(`${splineNumber(jump, decimals)}*(${positivePart})`);
     }
-    if (Math.abs(matrix[pivot][column]) < 1e-12) {
-      matrix[pivot][column] = 1e-12;
+    return terms.length > 0 ? `y'=${normalizeSplineFormula(terms.join(" + "))}` : null;
+  } else if (order === 2) {
+    const a2 = 2 * first.c;
+    const b2 = 6 * first.d;
+    terms.push(splinePolynomial(a2, b2, 0, 0, `x - ${baseX}`, decimals));
+    for (let i = 1; i < intervals.length; i++) {
+      const prev = intervals[i - 1];
+      const cur = intervals[i];
+      const t = cur.x - prev.x;
+      const y2_left = 2 * prev.c + 6 * prev.d * t;
+      const y2_right = 2 * cur.c;
+      const jump = y2_right - y2_left;
+      if (Math.abs(jump) < 10 ** (-(decimals + 1))) continue;
+      const knot = splineNumber(cur.x, decimals);
+      const positivePart = `((x - ${knot}) + abs(x - ${knot}))/2`;
+      terms.push(`${splineNumber(jump, decimals)}*(${positivePart})`);
     }
-    [matrix[column], matrix[pivot]] = [matrix[pivot], matrix[column]];
-    const divisor = matrix[column][column];
-    for (let j = column; j <= n; j++) matrix[column][j] /= divisor;
-    for (let row = 0; row < n; row++) {
-      if (row === column) continue;
-      const factor = matrix[row][column];
-      if (Math.abs(factor) < 1e-15) continue;
-      for (let j = column; j <= n; j++) matrix[row][j] -= factor * matrix[column][j];
-    }
+    return terms.length > 0 ? `y''=${normalizeSplineFormula(terms.join(" + "))}` : null;
   }
-  return matrix.map((row) => (Number.isFinite(row[n]) ? row[n] : 0));
-}
-
-function bsplineBasis(index, degree, x, knots) {
-  const last = knots[knots.length - 1];
-  if (x === last) {
-    return degree > 0 && index === knots.length - degree - 2 ? 1 : 0;
-  }
-  if (degree === 0) {
-    return x >= knots[index] && x < knots[index + 1] ? 1 : 0;
-  }
-  const leftDenominator = knots[index + degree] - knots[index];
-  const rightDenominator = knots[index + degree + 1] - knots[index + 1];
-  const left = leftDenominator > 0
-    ? ((x - knots[index]) / leftDenominator) * bsplineBasis(index, degree - 1, x, knots)
-    : 0;
-  const right = rightDenominator > 0
-    ? ((knots[index + degree + 1] - x) / rightDenominator) * bsplineBasis(index + 1, degree - 1, x, knots)
-    : 0;
-  return left + right;
+  return null;
 }
 
 function piecewiseCubicFormulaText(intervals, decimals = 14) {
@@ -234,26 +289,6 @@ function piecewiseCubicFormulaText(intervals, decimals = 14) {
     terms.push(`${splineNumber(jump, decimals)}*(${positivePart})^3`);
   }
   return `y=${normalizeSplineFormula(terms.join(" + "))}`;
-}
-
-function splinePolynomial(a, b, c, d, variable, decimals) {
-  const parts = [splineNumber(a, decimals)];
-  if (Math.abs(b) >= 10 ** (-(decimals + 1))) parts.push(`${splineNumber(b, decimals)}*(${variable})`);
-  if (Math.abs(c) >= 10 ** (-(decimals + 1))) parts.push(`${splineNumber(c, decimals)}*(${variable})^2`);
-  if (Math.abs(d) >= 10 ** (-(decimals + 1))) parts.push(`${splineNumber(d, decimals)}*(${variable})^3`);
-  return parts.join(" + ");
-}
-
-function splineNumber(value, decimals = 14) {
-  if (!Number.isFinite(value)) return "0";
-  const safe = Math.abs(value) < 0.5 * 10 ** -decimals ? 0 : value;
-  return Number(safe.toFixed(decimals)).toString();
-}
-
-function normalizeSplineFormula(text) {
-  return String(text)
-    .replace(/\+\s*-/g, "-")
-    .replace(/-\s*-/g, "+");
 }
 
 function piecewiseCubicDerivativeFormulaText(intervals, order = 1, decimals = 14) {
