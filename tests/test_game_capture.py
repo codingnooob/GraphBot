@@ -6,6 +6,7 @@ from core.game_capture import (
     crop_client_field,
     auto_crop_white_grid,
     resize_to_grid,
+    apply_size_caps,
     load_grid_capture_params,
 )
 
@@ -72,6 +73,34 @@ class GridCaptureParamsTests(unittest.TestCase):
         params = load_grid_capture_params(path="__nonexistent__.json")
         self.assertEqual(params["target_width"], 1000)
         self.assertEqual(params["target_height"], 600)
+
+
+class ApplySizeCapsTests(unittest.TestCase):
+    def test_noop_when_within_caps(self):
+        img = np.full((300, 500, 3), 128, dtype=np.uint8)
+        out = apply_size_caps(img)
+        np.testing.assert_array_equal(out, img)
+        self.assertEqual(out.shape, (300, 500, 3))
+
+    def test_downscales_when_exceeding_max_preserves_aspect(self):
+        img = np.zeros((2000, 3000, 3), dtype=np.uint8)
+        img[100:1900, 200:2800] = 128
+        out = apply_size_caps(img)
+        h, w = out.shape[:2]
+        self.assertLessEqual(w, 1600)
+        self.assertLessEqual(h, 960)
+        # Aspect preserved (3000x2000 -> 1.5; output w/h should equal 1.5).
+        self.assertAlmostEqual(w / h, 3000 / 2000, places=2)
+        # Graph content preserved, not truncated to white.
+        self.assertTrue(np.any(out == 128))
+
+    def test_upscales_when_below_min(self):
+        img = np.full((100, 100, 3), 128, dtype=np.uint8)
+        out = apply_size_caps(img)
+        h, w = out.shape[:2]
+        self.assertGreaterEqual(w, 400)
+        self.assertGreaterEqual(h, 240)
+        self.assertTrue(np.any(out == 128))
 
 
 if __name__ == "__main__":

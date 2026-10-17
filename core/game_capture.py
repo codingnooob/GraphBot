@@ -36,6 +36,15 @@ GRID_CAPTURE_CONFIG_PATH = PROJECT_ROOT / "config" / "capture_config.json"
 TARGET_WIDTH = 1000
 TARGET_HEIGHT = 600
 
+# Natural output sizing caps (pixels). The captured graph is sent to the UI at
+# its native auto-cropped resolution so it fills the canvas without scaling or
+# truncation. These bounds only engage for pathological dimensions, using
+# isotropic scaling that preserves all graph content (no cropping, no padding).
+NATURAL_MIN_WIDTH = 400
+NATURAL_MIN_HEIGHT = 240
+NATURAL_MAX_WIDTH = 1600
+NATURAL_MAX_HEIGHT = 960
+
 DEFAULT_GRID_CAPTURE_PARAMS = {
     "target_width": TARGET_WIDTH,
     "target_height": TARGET_HEIGHT,
@@ -150,6 +159,28 @@ def resize_to_grid(bgr, target_width, target_height):
     return canvas
 
 
+def apply_size_caps(bgr, min_w=NATURAL_MIN_WIDTH, min_h=NATURAL_MIN_HEIGHT,
+                    max_w=NATURAL_MAX_WIDTH, max_h=NATURAL_MAX_HEIGHT):
+    """Isotropically resize to stay within size caps, preserving all content.
+
+    Scales the image so both dimensions fall within [min_w, min_h] x
+    [max_w, max_h] without cropping or padding any graph content.  Returns
+    the (possibly resized) image.
+    """
+    height, width = bgr.shape[:2]
+    scale = 1.0
+    if width > max_w or height > max_h:
+        scale = min(scale, max_w / width, max_h / height)
+    if width < min_w or height < min_h:
+        scale = max(scale, min_w / width, min_h / height)
+    if scale == 1.0:
+        return bgr
+    new_w = max(1, int(round(width * scale)))
+    new_h = max(1, int(round(height * scale)))
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    return cv2.resize(bgr, (new_w, new_h), interpolation=interp)
+
+
 def _print_window(hwnd, device_context):
     """Call PrintWindow from user32 (not exported by every pywin32 build)."""
     user32 = ctypes.windll.user32
@@ -252,7 +283,10 @@ def capture_game_field(
     rendered directly from the Graphwar window, not from desktop pixels.
 
     Returns:
-        dict with keys ok, image (data URL), width, height, field — or ok=False, error.
+        dict with keys ok, image (data URL), width, height, raw_width,
+        raw_height, field — or ok=False, error.  ``width``/``height`` are the
+        native auto-cropped graph dimensions (clamped to size caps); the UI
+        sizes its canvas to match them rather than scaling to a fixed canvas.
     """
     hwnd = find_game_window(window_title)
     if hwnd is None:
@@ -260,17 +294,15 @@ def capture_game_field(
 
     margins = margins or load_capture_margins()
     grid_params = load_grid_capture_params()
-    target_width = int(grid_params["target_width"])
-    target_height = int(grid_params["target_height"])
     try:
         field = get_capture_field(hwnd, margins)
         client_bgr = grab_client_bgr(hwnd)
         field_bgr = crop_client_field(client_bgr, margins)
         # Auto-crop to the white grid playing area, removing peripheral UI.
         grid_bgr, _crop_box = auto_crop_white_grid(field_bgr, grid_params)
-        # Resize isotropically to the UI grid so cell dimensions and the
-        # (0,0) origin match the target canvas exactly.
-        bgr = resize_to_grid(grid_bgr, target_width, target_height)
+        # Send the graph at its native resolution, clamped to safe size caps,
+        # so it fills the UI canvas without scaling or truncation.
+        bgr = apply_size_caps(grid_bgr)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
@@ -352,6 +384,8 @@ def capture_game_field(
         "image": image,
         "width": field["width"],
         "height": field["height"],
+        "raw_width": field["width"],
+        "raw_height": field["height"],
         "field": field,
         "field_archive": field_archive,
         "field_archive_error": field_archive_error,
