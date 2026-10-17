@@ -2159,7 +2159,7 @@ function createAnimatedNetwork() {
   if (params.approxMethod === "sigmoid") {
     network = new SigmoidNetwork(params.numNeurons, params.sigmoidK);
     network.initFromData(trainingData, approxXMin, approxXMax, { stepHeights: params.stepHeights });
-    return () => network.trainEpoch(fitData, approxXMin, approxXMax, params.trainLr, params.freezeX0);
+    return () => network.train(fitData, approxXMin, approxXMax, params.trainLr, params.freezeX0);
   }
   if (params.approxMethod === "taylor") {
     network = new TaylorNetwork(params.taylorOrder, params.taylorHiddenLayers, params.taylorHiddenSize, params.mlpActivation ?? "tanh");
@@ -2169,7 +2169,7 @@ function createAnimatedNetwork() {
     return null;
   }
   network.initFromData(trainingData, approxXMin, approxXMax);
-  return () => network.trainEpoch(fitData, params.trainLr);
+  return () => network.train(fitData, params.trainLr);
 }
 
 function nextAnimationFrame(delayMs) {
