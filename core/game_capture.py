@@ -222,13 +222,30 @@ def capture_game_field(
         return {"ok": False, "error": f"Window «{window_title}» not found"}
 
     margins = margins or load_capture_margins()
+    grid_params = load_grid_capture_params()
+    target_width = int(grid_params["target_width"])
+    target_height = int(grid_params["target_height"])
     try:
         field = get_capture_field(hwnd, margins)
-        bgr = crop_client_field(grab_client_bgr(hwnd), margins)
+        client_bgr = grab_client_bgr(hwnd)
+        field_bgr = crop_client_field(client_bgr, margins)
+        # Auto-crop to the white grid playing area, removing peripheral UI.
+        grid_bgr, _crop_box = auto_crop_white_grid(field_bgr, grid_params)
+        # Resize isotropically to the UI grid so cell dimensions and the
+        # (0,0) origin match the target canvas exactly.
+        bgr = resize_to_grid(grid_bgr, target_width, target_height)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
         return {"ok": False, "error": f"Could not capture Graphwar quietly: {exc}"}
+
+    width, height = bgr.shape[1], bgr.shape[0]
+    field = {
+        "left": int(field.get("left", 0)),
+        "top": int(field.get("top", 0)),
+        "width": width,
+        "height": height,
+    }
     try:
         image = encode_png_data_url(bgr)
     except RuntimeError as exc:
