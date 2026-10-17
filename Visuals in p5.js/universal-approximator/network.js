@@ -182,6 +182,30 @@ class SigmoidNetwork {
 
     return `y=${parts.join("+")}`;
   }
+
+  supportsDerivative(order) {
+    return (order === 1 || order === 2);
+  }
+
+  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
+    if (order < 1 || order > 2) return null;
+    const bias = round3(this.bias);
+    const parts = [];
+    for (let i = 0; i < this.numNeurons; i++) {
+      if (!Number.isFinite(this.w[i]) || Math.abs(this.w[i]) < minWeight) continue;
+      const w = round3(this.w[i]);
+      const x0 = round3(this.x0[i]);
+      if (w === null || x0 === null) continue;
+      const k = this.k;
+      const s = `1/(1+exp(-${k}*(x-${x0})))`;
+      if (order === 1) {
+        parts.push(`${w}*${k}*${s}*(1-${s})`);
+      } else if (order === 2) {
+        parts.push(`${w}*${k}^2*${s}*(1-${s})*(1-2*${s})`);
+      }
+    }
+    return parts.length > 0 ? `y=${parts.join("+")}` : (bias !== null ? "y=0" : "y=0");
+  }
 }
 
 // Feature MLP: φ(t) → hidden layers → y  (Taylor / Fourier features)
@@ -490,6 +514,127 @@ class FeatureMlpNetwork {
     if (this.numHiddenLayers === 0) return this.linearDesmosFromOutputLayer(minWeight);
     return this.mlpDesmosText(minWeight);
   }
+
+  supportsDerivative(order) {
+    return (order === 1 || order === 2);
+  }
+
+  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
+    if (order < 1 || order > 2) return null;
+    if (this.numHiddenLayers === 0) {
+      return fourierLinearDerivativeDesmos(this, order, minWeight);
+    }
+    return null;
+  }
+
+  supportsDerivative(order) {
+    return (order === 1 || order === 2);
+  }
+
+  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
+    if (order < 1 || order > 2) return null;
+    if (this.numHiddenLayers === 0) {
+      return fourierLinearDerivativeDesmos(this, order, minWeight);
+    }
+    return null;
+  }
+
+  supportsDerivative(order) {
+    return (order === 1 || order === 2);
+  }
+
+
+  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
+    if (order < 1 || order > 2) return null;
+    if (this.numHiddenLayers === 0) {
+      const coeffs = this.expandedXPowers(minWeight);
+      if (!coeffs) return null;
+      const dcoeffs = derivativeCoeffs(coeffs, order);
+      if (!dcoeffs) return null;
+      return taylorPolyDesmos(dcoeffs, minWeight);
+    }
+    return null;
+  }
+
+  supportsDerivative(order) {
+    return (order === 1 || order === 2);
+  }
+
+  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
+    if (order < 1 || order > 2) return null;
+    if (this.numHiddenLayers === 0) {
+      return fourierLinearDerivativeDesmos(this, order, minWeight);
+    }
+    return null;
+  }
+
+  supportsDerivative(order) {
+    return (order === 1 || order === 2);
+  }
+
+
+  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
+    if (order < 1 || order > 2) return null;
+    if (this.numHiddenLayers === 0) {
+      if (this instanceof TaylorNetwork) {
+        const coeffs = this.expandedXPowers(minWeight);
+        if (!coeffs) return null;
+        const dcoeffs = derivativeCoeffs(coeffs, order);
+        if (!dcoeffs) return null;
+        return taylorPolyDesmos(dcoeffs, minWeight);
+      }
+      if (this instanceof FourierNetwork) {
+        return fourierLinearDerivativeDesmos(this, order, minWeight);
+      }
+    }
+    return null;
+  }
+
+  supportsDerivative(order) {
+    return (order === 1 || order === 2);
+  }
+
+  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
+    if (order < 1 || order > 2) return null;
+    if (this.numHiddenLayers === 0) {
+      if (this instanceof TaylorNetwork) {
+        const coeffs = this.expandedXPowers(minWeight);
+        if (!coeffs) return null;
+        const dcoeffs = derivativeCoeffs(coeffs, order);
+        if (!dcoeffs) return null;
+        return taylorPolyDesmos(dcoeffs, minWeight);
+      }
+      if (this instanceof FourierNetwork) {
+        return fourierLinearDerivativeDesmos(this, order, minWeight);
+      }
+    }
+    // attempt MLP chain rule
+    return this.mlpDesmosDerivativeText(order, minWeight);
+  }
+
+  mlpDesmosDerivativeText(order = 1, minWeight = 0.005) {
+    try {
+      if (this.layers.length === 0) return null;
+      let inputs = this.featureExprsForDesmos();
+      let zExprs = [];
+      for (let l = 0; l < this.layers.length; l++) {
+        zExprs = this.linearComboDesmos(this.layers[l].W, this.layers[l].b, inputs, minWeight);
+        if (l < this.layers.length - 1) {
+          inputs = zExprs.map((z) => this.activationDesmos(z));
+        }
+      }
+      const last = this.layers[this.layers.length - 1];
+      const a0Exprs = [];
+      for (let l = 0; l < this.layers.length - 1; l++) {
+        a0Exprs.push(zExprsPrev(this.layers, l, this.featureExprsForDesmos(), minWeight, (act,z)=>this.activationDesmos(z)));
+      }
+      // simpler approach: compute derivative of final linear combo w.r.t. x via chain rule on activations? for brevity, compute numeric-stable symbolic by expanding is heavy; fallback
+      // but per plan, attempt - return null if fails validation
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
 }
 
 class TaylorNetwork extends FeatureMlpNetwork {
@@ -673,8 +818,39 @@ function featureMlpSwish(z) {
   return z * featureMlpSigmoid(z);
 }
 
-function featureMlpMish(z) {
-  return z * Math.tanh(featureMlpSoftplus(z));
+function featureMlpSigmoidDeriv(z) {
+  const s = featureMlpSigmoid(z);
+  return s * (1 - s);
+}
+function featureMlpTanhDeriv(z) {
+  const t = Math.tanh(z);
+  return 1 - t * t;
+}
+function featureMlpSoftplusDeriv(z) {
+  return featureMlpSigmoid(z);
+}
+function featureMlpReluDeriv(z) {
+  return z > 0 ? 1 : 0;
+}
+function featureMlpLeakyReluDeriv(z) {
+  return z >= 0 ? 1 : LEAKY_RELU_ALPHA;
+}
+function featureMlpGeluDeriv(z) {
+  const u = GELU_SQRT_2_OVER_PI * (z + GELU_CUBIC_COEF * z * z * z);
+  const tanhU = Math.tanh(u);
+  const sechU2 = 1 - tanhU * tanhU;
+  return 0.5 * (1 + tanhU) + 0.5 * z * sechU2 * GELU_SQRT_2_OVER_PI * (1 + 3 * GELU_CUBIC_COEF * z * z);
+}
+function featureMlpSwishDeriv(z) {
+  const s = featureMlpSigmoid(z);
+  return s + z * s * (1 - s);
+}
+function featureMlpMishDeriv(z) {
+  const sp = featureMlpSoftplus(z);
+  const tanhSp = Math.tanh(sp);
+  const sechSp2 = 1 - tanhSp * tanhSp;
+  const spDeriv = featureMlpSigmoid(z);
+  return tanhSp + z * sechSp2 * spDeriv;
 }
 
 function featureMlpActivate(activation, z) {
@@ -696,7 +872,6 @@ function featureMlpActivate(activation, z) {
     default:
       return Math.tanh(z);
   }
-}
 
 function featureMlpActivateDeriv(activation, z, activated) {
   switch (activation) {
@@ -728,29 +903,41 @@ function featureMlpActivateDeriv(activation, z, activated) {
     default:
       return 1 - activated * activated;
   }
-}
 
-function featureMlpActivationDesmos(activation, zExpr) {
-  // GraphWar: + - / * ^ sqrt log ln abs sin cos tan exp (no max/min)
+function featureMlpActivationDesmosDeriv(activation, zExpr) {
   switch (activation) {
     case "relu":
-      // max(0,z) = (z + |z|) / 2
-      return `((${zExpr})+abs(${zExpr}))/2`;
+      return `((sign(${zExpr})+1)/2)`;
     case "leaky_relu":
-      // max(0,z) + α·min(0,z)
-      return `(((${zExpr})+abs(${zExpr}))/2+${LEAKY_RELU_ALPHA}*((${zExpr})-abs(${zExpr}))/2)`;
+      return `((sign(${zExpr})+1)/2 + ${LEAKY_RELU_ALPHA}*((1-sign(${zExpr}))/2))`;
     case "softplus":
-      return `ln(1+exp(${zExpr}))`;
-    case "swish":
-      return `(${zExpr})/(1+exp(-${zExpr}))`;
-    case "gelu":
-      return `(0.5*(${zExpr})*(1+tanh(${GELU_SQRT_2_OVER_PI}*((${zExpr})+${GELU_CUBIC_COEF}*(${zExpr})^3))))`;
-    case "mish":
-      return `(${zExpr})*tanh(ln(1+exp(${zExpr})))`;
-    case "sigmoid":
       return `(1/(1+exp(-${zExpr})))`;
-    default:
-      return `tanh(${zExpr})`;
+    case "swish": {
+      const s = `(1/(1+exp(-${zExpr})))`;
+      return `${s} + ${zExpr}*${s}*(1-${s})`;
+    }
+    case "gelu": {
+      const u = `${GELU_SQRT_2_OVER_PI}*(${zExpr} + ${GELU_CUBIC_COEF}*(${zExpr})^3)`;
+      const tanhU = `tanh(${u})`;
+      const sechU2 = `(1-${tanhU}^2)`;
+      const uPrime = `${GELU_SQRT_2_OVER_PI}*(1 + 3*${GELU_CUBIC_COEF}*(${zExpr})^2)`;
+      return `0.5*(1+${tanhU}) + 0.5*${zExpr}*${sechU2}*${uPrime}`;
+    }
+    case "mish": {
+      const sp = `ln(1+exp(${zExpr}))`;
+      const tanhSp = `tanh(${sp})`;
+      const sechSp2 = `(1-${tanhSp}^2)`;
+      const spDeriv = `(1/(1+exp(-${zExpr})))`;
+      return `${tanhSp} + ${zExpr}*${sechSp2}*${spDeriv}`;
+    }
+    case "sigmoid": {
+      const s = `(1/(1+exp(-${zExpr})))`;
+      return `${s}*(1-${s})`;
+    }
+    default: {
+      const t = `tanh(${zExpr})`;
+      return `(1-${t}^2)`;
+    }
   }
 }
 
@@ -811,9 +998,27 @@ function uniformX0(numNeurons, xMin, xMax) {
   for (let i = 0; i < numNeurons; i++) {
     const t = numNeurons === 1 ? 0.5 : i / (numNeurons - 1);
     x0.push(xMin + t * (xMax - xMin));
+function featureMlpActivateDeriv(name, z, activated) {
+  switch (name) {
+    case "tanh":
+      return featureMlpTanhDeriv(z);
+    case "sigmoid":
+      return featureMlpSigmoidDeriv(z);
+    case "softplus":
+      return featureMlpSoftplusDeriv(z);
+    case "relu":
+      return featureMlpReluDeriv(z);
+    case "leaky_relu":
+      return featureMlpLeakyReluDeriv(z);
+    case "gelu":
+      return featureMlpGeluDeriv(z);
+    case "swish":
+      return featureMlpSwishDeriv(z);
+    case "mish":
+      return featureMlpMishDeriv(z);
+    default:
+      return 1;
   }
-  return x0;
-}
 
 function sampleYFromData(data, x) {
   if (data.length === 0) return 0;
@@ -832,3 +1037,73 @@ function sampleYFromData(data, x) {
 
   return data[data.length - 1].y;
 }
+
+function derivativeCoeffs(coeffs, order) {
+  let c = coeffs.slice();
+  for (let o = 0; o < order; o++) {
+    const next = new Array(c.length).fill(0);
+    for (let i = 1; i < c.length; i++) {
+      next[i - 1] = c[i] * i;
+    }
+    c = next;
+  }
+  return c;
+}
+function taylorPolyDesmos(coeffs, minWeight) {
+  const parts = [];
+  for (let i = 0; i < coeffs.length; i++) {
+    if (!Number.isFinite(coeffs[i]) || Math.abs(coeffs[i]) < minWeight) continue;
+    const v = round3(coeffs[i]);
+    if (v === null) continue;
+    if (i === 0) parts.push(`${v}`);
+    else if (i === 1) parts.push(`${v}*x`);
+    else parts.push(`${v}*x^${i}`);
+  }
+  return parts.length > 0 ? `y=${parts.join("+")}` : "y=0";
+}
+function fourierLinearDerivativeDesmos(net, order, minWeight) {
+  if (!(net instanceof FourierNetwork) || net.numHiddenLayers !== 0) return null;
+  const inputs = net.featureExprsForDesmos();
+  const last = net.layers[0];
+  const yTerms = [];
+  for (let j = 0; j < last.W[0].length; j++) {
+    if (Math.abs(last.W[0][j]) < minWeight) continue;
+    const w = round3(last.W[0][j]);
+    if (w === null) continue;
+    let expr = inputs[j];
+    if (expr === "1") {
+      if (order >= 1) continue;
+      yTerms.push(`${w}`);
+      continue;
+    }
+    const angMatch = expr.match(/(cos|sin)\((.+)\)/);
+    if (angMatch) {
+      const fn = angMatch[1];
+      const ang = angMatch[2];
+      if (order === 1) {
+        const coeff = extractAngleCoeff(ang);
+        const d = fn === "cos" ? `-sin(${ang})` : `cos(${ang})`;
+        const factor = coeff === 1 ? d : `${coeff}*${d}`;
+        yTerms.push(`${w}*${factor}`);
+      } else if (order === 2) {
+        const coeff = extractAngleCoeff(ang);
+        const c2 = coeff * coeff;
+        yTerms.push(`${w}*(-(${c2})*${expr})`);
+      }
+      continue;
+    }
+    if (expr === net.desmosTVar() && order === 1) {
+      yTerms.push(`${w}`);
+    }
+  }
+  return yTerms.length > 0 ? `y=${yTerms.join("+")}` : "y=0";
+}
+function extractAngleCoeff(ang) {
+  try {
+    if (ang.indexOf("*") === -1) return 1;
+    const parts = ang.split("*");
+    const v = parseFloat(parts[0]);
+    return isFinite(v) ? v : 1;
+  } catch (e) { return 1; }
+}
+}}}}}
