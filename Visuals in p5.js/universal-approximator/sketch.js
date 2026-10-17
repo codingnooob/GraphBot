@@ -2182,6 +2182,9 @@ async function captureGameField() {
         data.image,
         (img) => {
           bgImage = img;
+          // Size the canvas to the captured graph's native dimensions so the
+          // graph fills the UI container without scaling or truncation.
+          resizeCanvas(img.width, img.height);
           resolve();
         },
         (err) => reject(err)
