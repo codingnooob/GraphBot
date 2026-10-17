@@ -74,32 +74,25 @@ def auto_crop_white_grid(bgr, params=None):
     kernel = cv2.getStructuringElement(
         cv2.MORPH_RECT, (int(p["open_kernel"]), int(p["open_kernel"]))
     )
-    # Close gaps in grid lines to avoid splitting the outer boundary
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    # Close small gaps in grid lines; don't aggressively open away outer boundary
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-    num, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
-    best = None
-    best_score = -1
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    # Find bounding box of all white pixels (union) to get full graph extent
+    white_points = np.column_stack(np.where(mask == 255))
+    if white_points.size == 0:
+        return bgr.copy(), None
+    y_coords, x_coords = white_points[:, 0], white_points[:, 1]
+    x0, x1 = int(x_coords.min()), int(x_coords.max())
+    y0, y1 = int(y_coords.min()), int(y_coords.max())
+    w = x1 - x0 + 1
+    h = y1 - y0 + 1
+    if w < 40 or h < 40:
+        return bgr.copy(), None
     height, width = bgr.shape[:2]
-    img_area = height * width
-    for label in range(1, num):
-        x, y, w, h, area = (int(value) for value in stats[label])
-        if area < int(p["min_component"]):
-            continue
-        if w < 40 or h < 40:
-            continue
-        # Prefer regions that cover the full extent of the input
-        coverage = area / img_area if img_area > 0 else 0
-        score = area + coverage * img_area * 10
-        if score > best_score:
-            best_score = score
-            best = (x, y, w, h)
-    if best is None:
+    if w * h < width * height * 0.05:
         return bgr.copy(), None
-    x, y, w, h = best
-    if w * h < img_area * 0.05:
-        return bgr.copy(), None
-    return bgr[y : y + h, x : x + w].copy(), best
+    box = (x0, y0, w, h)
+    return bgr[y0 : y0 + h, x0 : x0 + w].copy(), box
 
 
 def resize_to_grid(bgr, target_width, target_height):
