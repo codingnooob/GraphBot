@@ -61,12 +61,16 @@ def load_grid_capture_params(path=GRID_CAPTURE_CONFIG_PATH):
 
 
 def auto_crop_white_grid(bgr, params=None):
-    """Crop to the largest near-white rectangular region (the playing field).
+    """Crop to the white graph playing field, excluding all UI elements.
 
-    Removes peripheral UI elements and background noise outside the grid
-    boundaries. Returns (cropped_bgr, box) where box is (x, y, w, h) in
-    input-image pixels, or (bgr.copy(), None) when no usable white region is
-    found.
+    Uses morphological dilation to bridge gaps between white graph regions
+    separated by black obstacle circles, identifies the largest connected
+    component (the graph itself) on the dilated mask, then computes the tight
+    bounding box from original white pixels within that region. This excludes
+    stray white UI text/elements outside the graph while capturing the full
+    graph extent even when obstacles split the white area into multiple parts.
+    Returns (cropped_bgr, box) where box is (x, y, w, h) in input pixels,
+    or (bgr.copy(), None) when no usable white region is found.
     """
     p = {**DEFAULT_GRID_CAPTURE_PARAMS, **(params or {})}
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
@@ -74,16 +78,36 @@ def auto_crop_white_grid(bgr, params=None):
     kernel = cv2.getStructuringElement(
         cv2.MORPH_RECT, (int(p["open_kernel"]), int(p["open_kernel"]))
     )
-    # Close small gaps in grid lines; don't aggressively open away outer boundary
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    # Find bounding box of all white pixels (union) to get full graph extent
-    white_points = np.column_stack(np.where(mask == 255))
+    # Dilate to connect white graph regions split by black obstacle circles.
+    dilated = cv2.morphologyEx(mask, cv2.MORPH_DILATE, kernel, iterations=2)
+    # Remove small noise specks; keep only substantial white structures.
+    dilated = cv2.morphologyEx(dilated, cv2.MORPH_OPEN, kernel)
+    num, labels, stats, _ = cv2.connectedComponentsWithStats(dilated, 8)
+    best = None
+    best_area = 0
+    for label in range(1, num):
+        x, y, w, h, area = (int(value) for value in stats[label])
+        if area < int(p["min_component"]):
+            continue
+        if w < 40 or h < 40:
+            continue
+        if area > best_area:
+            best_area = area
+            best = (x, y, w, h)
+    if best is None:
+        return bgr.copy(), None
+    dx, dy, dw, dh = best
+    # Tighten to the actual white pixels of the original mask within the
+    # dilated component's region, avoiding dilation-driven expansion.
+    region_mask = mask[dy : dy + dh, dx : dx + dw]
+    white_points = np.column_stack(np.where(region_mask == 255))
     if white_points.size == 0:
         return bgr.copy(), None
-    y_coords, x_coords = white_points[:, 0], white_points[:, 1]
-    x0, x1 = int(x_coords.min()), int(x_coords.max())
-    y0, y1 = int(y_coords.min()), int(y_coords.max())
+    ry_coords, rx_coords = white_points[:, 0], white_points[:, 1]
+    x0 = dx + int(rx_coords.min())
+    x1 = dx + int(rx_coords.max())
+    y0 = dy + int(ry_coords.min())
+    y1 = dy + int(ry_coords.max())
     w = x1 - x0 + 1
     h = y1 - y0 + 1
     if w < 40 or h < 40:
