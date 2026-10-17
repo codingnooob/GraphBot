@@ -83,54 +83,57 @@ class SigmoidNetwork {
     this.sanitizeParams();
   }
 
-  trainEpoch(data, xMin, xMax, lr = 0.08, freezeX0 = true) {
-    if (data.length === 0) return false;
+  train(data, xMin, xMax, epochs = 4000, lr = 0.08, freezeX0 = true) {
+    if (epochs <= 0 || data.length === 0) {
+      this.mse = this.computeMse(data);
+      return this.mse;
+    }
+
     const safeLr = Math.min(lr, 0.05);
-    const n = data.length;
-    let gradBias = 0;
-    const gradW = new Array(this.numNeurons).fill(0);
-    const gradX0 = new Array(this.numNeurons).fill(0);
 
-    for (const pt of data) {
-      const { y: pred, hidden } = this.forward(pt.x);
-      if (!Number.isFinite(pred)) {
-        this.sanitizeParams();
-        return false;
-      }
+    for (let epoch = 0; epoch < epochs; epoch++) {
+      const n = data.length;
+      let gradBias = 0;
+      const gradW = new Array(this.numNeurons).fill(0);
+      const gradX0 = new Array(this.numNeurons).fill(0);
 
-      const err = pred - pt.y;
-      const grad = (2 / n) * err;
+      for (const pt of data) {
+        const { y: pred, hidden } = this.forward(pt.x);
+        if (!Number.isFinite(pred)) {
+          this.sanitizeParams();
+          break;
+        }
 
-      if (!Number.isFinite(grad)) continue;
+        const err = pred - pt.y;
+        const grad = (2 / n) * err;
 
-      gradBias += grad;
+        if (!Number.isFinite(grad)) continue;
 
-      for (let i = 0; i < this.numNeurons; i++) {
-        const s = hidden[i];
-        gradW[i] += grad * s;
-        if (!freezeX0) {
-          const ds = s * (1 - s);
-          gradX0[i] += grad * this.w[i] * ds * (-this.k);
+        gradBias += grad;
+
+        for (let i = 0; i < this.numNeurons; i++) {
+          const s = hidden[i];
+          gradW[i] += grad * s;
+          if (!freezeX0) {
+            const ds = s * (1 - s);
+            gradX0[i] += grad * this.w[i] * ds * (-this.k);
+          }
         }
       }
-    }
 
-    this.bias -= safeLr * gradBias;
-    for (let i = 0; i < this.numNeurons; i++) {
-      this.w[i] -= safeLr * gradW[i];
-      if (!freezeX0) {
-        this.x0[i] -= safeLr * gradX0[i];
-        this.x0[i] = clamp(this.x0[i], xMin - 5, xMax + 5);
+      this.bias -= safeLr * gradBias;
+      for (let i = 0; i < this.numNeurons; i++) {
+        this.w[i] -= safeLr * gradW[i];
+        if (!freezeX0) {
+          this.x0[i] -= safeLr * gradX0[i];
+          this.x0[i] = clamp(this.x0[i], xMin - 5, xMax + 5);
+        }
       }
-    }
 
-    this.sanitizeParams();
-    return Number.isFinite(this.bias) && this.w.every((w) => Number.isFinite(w));
-  }
-
-  train(data, xMin, xMax, epochs = 4000, lr = 0.08, freezeX0 = true) {
-    for (let epoch = 0; epoch < epochs; epoch++) {
-      if (!this.trainEpoch(data, xMin, xMax, lr, freezeX0)) break;
+      this.sanitizeParams();
+      if (!Number.isFinite(this.bias) || this.w.some((w) => !Number.isFinite(w))) {
+        break;
+      }
     }
 
     this.mse = this.computeMse(data);
@@ -189,7 +192,6 @@ class SigmoidNetwork {
 
   toDesmosDerivativeText(order = 1, minWeight = 0.005) {
     if (order < 1 || order > 2) return null;
-    const bias = round3(this.bias);
     const parts = [];
     for (let i = 0; i < this.numNeurons; i++) {
       if (!Number.isFinite(this.w[i]) || Math.abs(this.w[i]) < minWeight) continue;
@@ -197,33 +199,9 @@ class SigmoidNetwork {
       const x0 = round3(this.x0[i]);
       if (w === null || x0 === null) continue;
       const k = this.k;
-      const s = `1/(1+exp(-${k}*(x-${x0})))`;
-      if (order === 1) {
-        parts.push(`${w}*${k}*${s}*(1-${s})`);
-      } else if (order === 2) {
-        parts.push(`${w}*${k}^2*${s}*(1-${s})*(1-2*${s})`);
-      }
-    }
-    return parts.length > 0 ? `y=${parts.join("+")}` : (bias !== null ? "y=0" : "y=0");
-  }
-
-  supportsDerivative(order) {
-    return order === 1 || order === 2;
-  }
-
-  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
-    if (order !== 1 && order !== 2) return null;
-    const bias = round3(this.bias);
-    const parts = [];
-    for (let i = 0; i < this.numNeurons; i++) {
-      if (!Number.isFinite(this.w[i]) || Math.abs(this.w[i]) < minWeight) continue;
-      const w = round3(this.w[i]);
-      const x0 = round3(this.x0[i]);
-      if (w === null || x0 === null) continue;
-      const k = this.k;
-      const s = `1/(1+exp(-${k}*(x-${x0})))`;
-      if (order === 1) parts.push(`${w}*${k}*${s}*(1-${s})`);
-      else parts.push(`${w}*${k}^2*${s}*(1-${s})*(1-2*${s})`);
+      const sig = `1/(1+exp(-${k}*(x-${x0})))`;
+      if (order === 1) parts.push(`${w}*${k}*${sig}*(1-${sig})`);
+      else parts.push(`${w}*${k}^2*${sig}*(1-${sig})*(1-2*${sig})`);
     }
     return parts.length > 0 ? `y=${parts.join("+")}` : "y=0";
   }
@@ -391,51 +369,58 @@ class FeatureMlpNetwork {
     }
   }
 
-  trainEpoch(data, lr = 0.02) {
-    if (data.length === 0 || this.layers.length === 0) return false;
+  train(data, epochs = 4000, lr = 0.02) {
+    if (epochs <= 0 || data.length === 0 || this.layers.length === 0) {
+      this.mse = this.computeMse(data);
+      return this.mse;
+    }
+
     const safeLr = Math.min(lr, 0.2);
     const gradW = this.layers.map((layer) => layer.W.map((row) => row.map(() => 0)));
     const gradB = this.layers.map((layer) => layer.b.map(() => 0));
 
-    let badStep = false;
-    const n = data.length;
+    for (let epoch = 0; epoch < epochs; epoch++) {
+      for (let l = 0; l < this.layers.length; l++) {
+        for (let o = 0; o < gradW[l].length; o++) {
+          gradW[l][o].fill(0);
+        }
+        gradB[l].fill(0);
+      }
 
-    for (const pt of data) {
-      const { y, activations, preActivations } = this.forward(pt.x);
-      if (!Number.isFinite(y)) {
-        badStep = true;
+      let badStep = false;
+      const n = data.length;
+
+      for (const pt of data) {
+        const { y, activations, preActivations } = this.forward(pt.x);
+        if (!Number.isFinite(y)) {
+          badStep = true;
+          break;
+        }
+
+        const err = y - pt.y;
+        const gradOut = (2 / n) * err;
+        if (!Number.isFinite(gradOut)) continue;
+
+        this.accumulateGradients(gradOut, activations, preActivations, gradW, gradB);
+      }
+
+      if (badStep) {
+        this.sanitizeParams();
         break;
       }
 
-      const err = y - pt.y;
-      const gradOut = (2 / n) * err;
-      if (!Number.isFinite(gradOut)) continue;
-
-      this.accumulateGradients(gradOut, activations, preActivations, gradW, gradB);
-    }
-
-    if (badStep) {
-      this.sanitizeParams();
-      return false;
-    }
-
-    for (let l = 0; l < this.layers.length; l++) {
-      for (let o = 0; o < this.layers[l].W.length; o++) {
-        for (let i = 0; i < this.layers[l].W[o].length; i++) {
-          this.layers[l].W[o][i] -= safeLr * gradW[l][o][i];
+      for (let l = 0; l < this.layers.length; l++) {
+        for (let o = 0; o < this.layers[l].W.length; o++) {
+          for (let i = 0; i < this.layers[l].W[o].length; i++) {
+            this.layers[l].W[o][i] -= safeLr * gradW[l][o][i];
+          }
+          this.layers[l].b[o] -= safeLr * gradB[l][o];
         }
-        this.layers[l].b[o] -= safeLr * gradB[l][o];
       }
-    }
-    this.sanitizeParams();
-    return true;
 
-  }
-
-  train(data, epochs = 4000, lr = 0.02) {
-    for (let epoch = 0; epoch < epochs; epoch++) {
-      if (!this.trainEpoch(data, lr)) break;
+      this.sanitizeParams();
     }
+
     this.mse = this.computeMse(data);
     return this.mse;
   }
@@ -542,127 +527,6 @@ class FeatureMlpNetwork {
 
   toDesmosDerivativeText(order = 1, minWeight = 0.005) {
     if (order < 1 || order > 2) return null;
-    if (this.numHiddenLayers === 0) {
-      return fourierLinearDerivativeDesmos(this, order, minWeight);
-    }
-    return null;
-  }
-
-  supportsDerivative(order) {
-    return (order === 1 || order === 2);
-  }
-
-  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
-    if (order < 1 || order > 2) return null;
-    if (this.numHiddenLayers === 0) {
-      return fourierLinearDerivativeDesmos(this, order, minWeight);
-    }
-    return null;
-  }
-
-  supportsDerivative(order) {
-    return (order === 1 || order === 2);
-  }
-
-
-  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
-    if (order < 1 || order > 2) return null;
-    if (this.numHiddenLayers === 0) {
-      const coeffs = this.expandedXPowers(minWeight);
-      if (!coeffs) return null;
-      const dcoeffs = derivativeCoeffs(coeffs, order);
-      if (!dcoeffs) return null;
-      return taylorPolyDesmos(dcoeffs, minWeight);
-    }
-    return null;
-  }
-
-  supportsDerivative(order) {
-    return (order === 1 || order === 2);
-  }
-
-  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
-    if (order < 1 || order > 2) return null;
-    if (this.numHiddenLayers === 0) {
-      return fourierLinearDerivativeDesmos(this, order, minWeight);
-    }
-    return null;
-  }
-
-  supportsDerivative(order) {
-    return (order === 1 || order === 2);
-  }
-
-
-  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
-    if (order < 1 || order > 2) return null;
-    if (this.numHiddenLayers === 0) {
-      if (this instanceof TaylorNetwork) {
-        const coeffs = this.expandedXPowers(minWeight);
-        if (!coeffs) return null;
-        const dcoeffs = derivativeCoeffs(coeffs, order);
-        if (!dcoeffs) return null;
-        return taylorPolyDesmos(dcoeffs, minWeight);
-      }
-      if (this instanceof FourierNetwork) {
-        return fourierLinearDerivativeDesmos(this, order, minWeight);
-      }
-    }
-    return null;
-  }
-
-  supportsDerivative(order) {
-    return (order === 1 || order === 2);
-  }
-
-  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
-    if (order < 1 || order > 2) return null;
-    if (this.numHiddenLayers === 0) {
-      if (this instanceof TaylorNetwork) {
-        const coeffs = this.expandedXPowers(minWeight);
-        if (!coeffs) return null;
-        const dcoeffs = derivativeCoeffs(coeffs, order);
-        if (!dcoeffs) return null;
-        return taylorPolyDesmos(dcoeffs, minWeight);
-      }
-      if (this instanceof FourierNetwork) {
-        return fourierLinearDerivativeDesmos(this, order, minWeight);
-      }
-    }
-    // attempt MLP chain rule
-    return this.mlpDesmosDerivativeText(order, minWeight);
-  }
-
-  mlpDesmosDerivativeText(order = 1, minWeight = 0.005) {
-    try {
-      if (this.layers.length === 0) return null;
-      let inputs = this.featureExprsForDesmos();
-      let zExprs = [];
-      for (let l = 0; l < this.layers.length; l++) {
-        zExprs = this.linearComboDesmos(this.layers[l].W, this.layers[l].b, inputs, minWeight);
-        if (l < this.layers.length - 1) {
-          inputs = zExprs.map((z) => this.activationDesmos(z));
-        }
-      }
-      const last = this.layers[this.layers.length - 1];
-      const a0Exprs = [];
-      for (let l = 0; l < this.layers.length - 1; l++) {
-        a0Exprs.push(zExprsPrev(this.layers, l, this.featureExprsForDesmos(), minWeight, (act,z)=>this.activationDesmos(z)));
-      }
-      // simpler approach: compute derivative of final linear combo w.r.t. x via chain rule on activations? for brevity, compute numeric-stable symbolic by expanding is heavy; fallback
-      // but per plan, attempt - return null if fails validation
-      return null;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  supportsDerivative(order) {
-    return order === 1 || order === 2;
-  }
-
-  toDesmosDerivativeText(order = 1, minWeight = 0.005) {
-    if (order !== 1 && order !== 2) return null;
     if (this.numHiddenLayers !== 0 || this.layers.length === 0) return null;
     if (this instanceof TaylorNetwork) {
       const coeffs = this.expandedXPowers(minWeight);
@@ -859,39 +723,8 @@ function featureMlpSwish(z) {
   return z * featureMlpSigmoid(z);
 }
 
-function featureMlpSigmoidDeriv(z) {
-  const s = featureMlpSigmoid(z);
-  return s * (1 - s);
-}
-function featureMlpTanhDeriv(z) {
-  const t = Math.tanh(z);
-  return 1 - t * t;
-}
-function featureMlpSoftplusDeriv(z) {
-  return featureMlpSigmoid(z);
-}
-function featureMlpReluDeriv(z) {
-  return z > 0 ? 1 : 0;
-}
-function featureMlpLeakyReluDeriv(z) {
-  return z >= 0 ? 1 : LEAKY_RELU_ALPHA;
-}
-function featureMlpGeluDeriv(z) {
-  const u = GELU_SQRT_2_OVER_PI * (z + GELU_CUBIC_COEF * z * z * z);
-  const tanhU = Math.tanh(u);
-  const sechU2 = 1 - tanhU * tanhU;
-  return 0.5 * (1 + tanhU) + 0.5 * z * sechU2 * GELU_SQRT_2_OVER_PI * (1 + 3 * GELU_CUBIC_COEF * z * z);
-}
-function featureMlpSwishDeriv(z) {
-  const s = featureMlpSigmoid(z);
-  return s + z * s * (1 - s);
-}
-function featureMlpMishDeriv(z) {
-  const sp = featureMlpSoftplus(z);
-  const tanhSp = Math.tanh(sp);
-  const sechSp2 = 1 - tanhSp * tanhSp;
-  const spDeriv = featureMlpSigmoid(z);
-  return tanhSp + z * sechSp2 * spDeriv;
+function featureMlpMish(z) {
+  return z * Math.tanh(featureMlpSoftplus(z));
 }
 
 function featureMlpActivate(activation, z) {
@@ -913,6 +746,7 @@ function featureMlpActivate(activation, z) {
     default:
       return Math.tanh(z);
   }
+}
 
 function featureMlpActivateDeriv(activation, z, activated) {
   switch (activation) {
@@ -944,41 +778,29 @@ function featureMlpActivateDeriv(activation, z, activated) {
     default:
       return 1 - activated * activated;
   }
+}
 
-function featureMlpActivationDesmosDeriv(activation, zExpr) {
+function featureMlpActivationDesmos(activation, zExpr) {
+  // GraphWar: + - / * ^ sqrt log ln abs sin cos tan exp (no max/min)
   switch (activation) {
     case "relu":
-      return `((sign(${zExpr})+1)/2)`;
+      // max(0,z) = (z + |z|) / 2
+      return `((${zExpr})+abs(${zExpr}))/2`;
     case "leaky_relu":
-      return `((sign(${zExpr})+1)/2 + ${LEAKY_RELU_ALPHA}*((1-sign(${zExpr}))/2))`;
+      // max(0,z) + α·min(0,z)
+      return `(((${zExpr})+abs(${zExpr}))/2+${LEAKY_RELU_ALPHA}*((${zExpr})-abs(${zExpr}))/2)`;
     case "softplus":
+      return `ln(1+exp(${zExpr}))`;
+    case "swish":
+      return `(${zExpr})/(1+exp(-${zExpr}))`;
+    case "gelu":
+      return `(0.5*(${zExpr})*(1+tanh(${GELU_SQRT_2_OVER_PI}*((${zExpr})+${GELU_CUBIC_COEF}*(${zExpr})^3))))`;
+    case "mish":
+      return `(${zExpr})*tanh(ln(1+exp(${zExpr})))`;
+    case "sigmoid":
       return `(1/(1+exp(-${zExpr})))`;
-    case "swish": {
-      const s = `(1/(1+exp(-${zExpr})))`;
-      return `${s} + ${zExpr}*${s}*(1-${s})`;
-    }
-    case "gelu": {
-      const u = `${GELU_SQRT_2_OVER_PI}*(${zExpr} + ${GELU_CUBIC_COEF}*(${zExpr})^3)`;
-      const tanhU = `tanh(${u})`;
-      const sechU2 = `(1-${tanhU}^2)`;
-      const uPrime = `${GELU_SQRT_2_OVER_PI}*(1 + 3*${GELU_CUBIC_COEF}*(${zExpr})^2)`;
-      return `0.5*(1+${tanhU}) + 0.5*${zExpr}*${sechU2}*${uPrime}`;
-    }
-    case "mish": {
-      const sp = `ln(1+exp(${zExpr}))`;
-      const tanhSp = `tanh(${sp})`;
-      const sechSp2 = `(1-${tanhSp}^2)`;
-      const spDeriv = `(1/(1+exp(-${zExpr})))`;
-      return `${tanhSp} + ${zExpr}*${sechSp2}*${spDeriv}`;
-    }
-    case "sigmoid": {
-      const s = `(1/(1+exp(-${zExpr})))`;
-      return `${s}*(1-${s})`;
-    }
-    default: {
-      const t = `tanh(${zExpr})`;
-      return `(1-${t}^2)`;
-    }
+    default:
+      return `tanh(${zExpr})`;
   }
 }
 
@@ -1039,27 +861,9 @@ function uniformX0(numNeurons, xMin, xMax) {
   for (let i = 0; i < numNeurons; i++) {
     const t = numNeurons === 1 ? 0.5 : i / (numNeurons - 1);
     x0.push(xMin + t * (xMax - xMin));
-function featureMlpActivateDeriv(name, z, activated) {
-  switch (name) {
-    case "tanh":
-      return featureMlpTanhDeriv(z);
-    case "sigmoid":
-      return featureMlpSigmoidDeriv(z);
-    case "softplus":
-      return featureMlpSoftplusDeriv(z);
-    case "relu":
-      return featureMlpReluDeriv(z);
-    case "leaky_relu":
-      return featureMlpLeakyReluDeriv(z);
-    case "gelu":
-      return featureMlpGeluDeriv(z);
-    case "swish":
-      return featureMlpSwishDeriv(z);
-    case "mish":
-      return featureMlpMishDeriv(z);
-    default:
-      return 1;
   }
+  return x0;
+}
 
 function sampleYFromData(data, x) {
   if (data.length === 0) return 0;
@@ -1077,68 +881,4 @@ function sampleYFromData(data, x) {
   }
 
   return data[data.length - 1].y;
-}
-
-function derivativeCoeffs(coeffs, order) {
-  let c = coeffs.slice();
-  for (let o = 0; o < order; o++) {
-    const next = new Array(c.length).fill(0);
-    for (let i = 1; i < c.length; i++) next[i - 1] = c[i] * i;
-    c = next;
-  }
-  return c;
-}
-function taylorPolyDesmos(coeffs, minWeight) {
-  const parts = [];
-  for (let i = 0; i < coeffs.length; i++) {
-    if (!Number.isFinite(coeffs[i]) || Math.abs(coeffs[i]) < minWeight) continue;
-    const v = round3(coeffs[i]);
-    if (v === null) continue;
-    if (i === 0) parts.push(`${v}`);
-    else if (i === 1) parts.push(`${v}*x`);
-    else parts.push(`${v}*x^${i}`);
-  }
-  return parts.length > 0 ? `y=${parts.join("+")}` : "y=0";
-}
-function fourierLinearDerivativeDesmos(net, order, minWeight) {
-  if (!(net instanceof FourierNetwork) || net.numHiddenLayers !== 0) return null;
-  const inputs = net.featureExprsForDesmos();
-  const last = net.layers[0];
-  const yTerms = [];
-  for (let j = 0; j < last.W[0].length; j++) {
-    if (Math.abs(last.W[0][j]) < minWeight) continue;
-    const w = round3(last.W[0][j]);
-    if (w === null) continue;
-    const expr = inputs[j];
-    if (expr === "1") {
-      if (order >= 1) continue;
-      yTerms.push(`${w}`);
-      continue;
-    }
-    const angMatch = expr.match(/(cos|sin)\((.+)\)/);
-    if (angMatch) {
-      const fn = angMatch[1];
-      const ang = angMatch[2];
-      const coeff = extractAngleCoeff(ang);
-      if (order === 1) {
-        const d = fn === "cos" ? `-sin(${ang})` : `cos(${ang})`;
-        const factor = coeff === 1 ? d : `${coeff}*${d}`;
-        yTerms.push(`${w}*${factor}`);
-      } else if (order === 2) {
-        const c2 = coeff * coeff;
-        yTerms.push(`${w}*(-(${c2})*${expr})`);
-      }
-      continue;
-    }
-    if (expr === net.desmosTVar() && order === 1) yTerms.push(`${w}`);
-  }
-  return yTerms.length > 0 ? `y=${yTerms.join("+")}` : "y=0";
-}
-function extractAngleCoeff(ang) {
-  try {
-    if (ang.indexOf("*") === -1) return 1;
-    const parts = ang.split("*");
-    const v = parseFloat(parts[0]);
-    return Number.isFinite(v) ? v : 1;
-  } catch (e) { return 1; }
 }
