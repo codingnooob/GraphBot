@@ -4,6 +4,8 @@ Capture a color screenshot of the Graphwar game field for the approximator UI.
 
 import base64
 import ctypes
+import json
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -23,6 +25,101 @@ from core.window_capture import (
 
 GAME_PRECISION = 5
 PW_CLIENTONLY = 0x00000001
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+GRID_CAPTURE_CONFIG_PATH = PROJECT_ROOT / "config" / "capture_config.json"
+
+# The approximator UI renders a 1000x600 canvas (5:3) covering game space
+# x=-25..25, y=-15..15, i.e. 20 px per game unit on both axes (isotropic).
+# The captured field must match this exactly so cell dimensions and the
+# (0,0) origin align with the target UI grid.
+TARGET_WIDTH = 1000
+TARGET_HEIGHT = 600
+
+DEFAULT_GRID_CAPTURE_PARAMS = {
+    "target_width": TARGET_WIDTH,
+    "target_height": TARGET_HEIGHT,
+    "white_thresh": 235,
+    "open_kernel": 5,
+    "min_component": 1000,
+}
+
+
+def load_grid_capture_params(path=GRID_CAPTURE_CONFIG_PATH):
+    params = DEFAULT_GRID_CAPTURE_PARAMS.copy()
+    try:
+        if path.exists():
+            with open(path, encoding="utf-8") as file:
+                data = json.load(file)
+            override = data.get("grid_capture", {})
+            for key in DEFAULT_GRID_CAPTURE_PARAMS:
+                if key in override:
+                    params[key] = int(override[key])
+    except Exception:
+        pass
+    return params
+
+
+def auto_crop_white_grid(bgr, params=None):
+    """Crop to the largest near-white rectangular region (the playing field).
+
+    Removes peripheral UI elements and background noise outside the grid
+    boundaries. Returns (cropped_bgr, box) where box is (x, y, w, h) in
+    input-image pixels, or (bgr.copy(), None) when no usable white region is
+    found.
+    """
+    p = {**DEFAULT_GRID_CAPTURE_PARAMS, **(params or {})}
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    _, mask = cv2.threshold(gray, int(p["white_thresh"]), 255, cv2.THRESH_BINARY)
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT, (int(p["open_kernel"]), int(p["open_kernel"]))
+    )
+    # Close gaps in grid lines to avoid splitting the outer boundary
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    num, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    best = None
+    best_score = -1
+    height, width = bgr.shape[:2]
+    img_area = height * width
+    for label in range(1, num):
+        x, y, w, h, area = (int(value) for value in stats[label])
+        if area < int(p["min_component"]):
+            continue
+        if w < 40 or h < 40:
+            continue
+        # Prefer regions that cover the full extent of the input
+        coverage = area / img_area if img_area > 0 else 0
+        score = area + coverage * img_area * 10
+        if score > best_score:
+            best_score = score
+            best = (x, y, w, h)
+    if best is None:
+        return bgr.copy(), None
+    x, y, w, h = best
+    if w * h < img_area * 0.05:
+        return bgr.copy(), None
+    return bgr[y : y + h, x : x + w].copy(), best
+
+
+def resize_to_grid(bgr, target_width, target_height):
+    """Resize isotropically into the target canvas, padding with white.
+
+    Preserves cell dimensions (no anisotropic distortion) and keeps the grid
+    centered so the game origin (0,0) remains at the canvas center, matching
+    the target UI grid.
+    """
+    height, width = bgr.shape[:2]
+    scale = min(target_width / width, target_height / height)
+    new_w = max(1, int(round(width * scale)))
+    new_h = max(1, int(round(height * scale)))
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    resized = cv2.resize(bgr, (new_w, new_h), interpolation=interp)
+    canvas = np.full((target_height, target_width, 3), 255, dtype=np.uint8)
+    top = (target_height - new_h) // 2
+    left = (target_width - new_w) // 2
+    canvas[top : top + new_h, left : left + new_w] = resized
+    return canvas
 
 
 def _print_window(hwnd, device_context):
@@ -134,13 +231,30 @@ def capture_game_field(
         return {"ok": False, "error": f"Window «{window_title}» not found"}
 
     margins = margins or load_capture_margins()
+    grid_params = load_grid_capture_params()
+    target_width = int(grid_params["target_width"])
+    target_height = int(grid_params["target_height"])
     try:
         field = get_capture_field(hwnd, margins)
-        bgr = crop_client_field(grab_client_bgr(hwnd), margins)
+        client_bgr = grab_client_bgr(hwnd)
+        field_bgr = crop_client_field(client_bgr, margins)
+        # Auto-crop to the white grid playing area, removing peripheral UI.
+        grid_bgr, _crop_box = auto_crop_white_grid(field_bgr, grid_params)
+        # Resize isotropically to the UI grid so cell dimensions and the
+        # (0,0) origin match the target canvas exactly.
+        bgr = resize_to_grid(grid_bgr, target_width, target_height)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
         return {"ok": False, "error": f"Could not capture Graphwar quietly: {exc}"}
+
+    width, height = bgr.shape[1], bgr.shape[0]
+    field = {
+        "left": int(field.get("left", 0)),
+        "top": int(field.get("top", 0)),
+        "width": width,
+        "height": height,
+    }
     try:
         image = encode_png_data_url(bgr)
     except RuntimeError as exc:
