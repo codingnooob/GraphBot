@@ -2025,6 +2025,7 @@ function getActiveFormulaText() {
 
 function getActiveDerivativeText(order) {
   if (order !== 1 && order !== 2) return null;
+  let formula = null;
   if (!formula) {
     const expr = getActiveFormulaText();
     if (expr) {
@@ -2376,9 +2377,10 @@ async function captureGameField() {
       );
     }
     updateStatusPanel();
-  } catch {
+  } catch (error) {
+    console.error("captureGameField failed:", error);
     alert(
-      "Capture server unavailable.\nRun: python tools/approximator_server.py\nThen open http://127.0.0.1:8765/"
+      `Capture failed: ${error && error.message ? error.message : error}\nRun: python tools/approximator_server.py\nThen open http://127.0.0.1:8765/`
     );
   } finally {
     isCapturing = false;
