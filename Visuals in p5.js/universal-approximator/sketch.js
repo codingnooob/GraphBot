@@ -1928,9 +1928,10 @@ function directLineDerivativeFormula(p1, p2, useGamePrecision = false) {
     dx = y1 !== y2 ? verticalEps(y1, y2) : VERTICAL_MIN_EPS;
   }
   const m = (y2 - y1) / dx;
-  const mr = round(m);
-  if (Math.abs(mr) < 1e-10) return "0";
-  return `${mr}*((sign(x - ${x1}) - sign(x - ${x2}))/2)`;
+  const dist = round(m / 2);
+  const coeff = 2 * dist;
+  if (Math.abs(coeff) < 1e-10) return "0";
+  return `${coeff}*((sign(x - ${x1}) - sign(x - ${x2}))/2)`;
 }
 
 function waypointsDerivativeFormulaText(waypoints, useGamePrecision = false, includeYPrimePrefix = true, order = 1) {
