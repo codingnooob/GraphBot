@@ -1917,37 +1917,40 @@ function directLineFormula(p1, p2, useGamePrecision = false) {
   return `${dist}*(abs(x - ${x1}) - abs(x - ${x2}))`;
 }
 
-function directLineDerivativeFormula(p1, p2, useGamePrecision = false) {
-  const round = useGamePrecision ? fmtGame : roundCoord;
-  const x1 = round(p1.x);
-  const y1 = round(p1.y);
-  const x2 = round(p2.x);
-  const y2 = round(p2.y);
-  let dx = x2 - x1;
-  if (Math.abs(dx) < 1e-12) {
-    dx = y1 !== y2 ? verticalEps(y1, y2) : VERTICAL_MIN_EPS;
+function deriveWithMathJS(expr, order, decimals = 14) {
+  if (!window.math) return null;
+  try {
+    const cleaned = String(expr).trim();
+    const node = math.parse(cleaned.startsWith("y=") ? cleaned.substring(2) : cleaned);
+    let d = node;
+    for (let i = 0; i < order; i++) {
+      d = math.derivative(d, "x");
+    }
+    const simple = math.simplify(d);
+    const text = simple.toString({ parenthesis: "auto" });
+    if (!text || text === "0" || text === "NaN" || text === "undefined") return null;
+    return text;
+  } catch (e) {
+    return null;
   }
-  const m = (y2 - y1) / dx;
-  const dist = round(m / 2);
-  const coeff = 2 * dist;
-  if (Math.abs(coeff) < 1e-10) return "0";
-  return `${coeff}*((sign(x - ${x1}) - sign(x - ${x2}))/2)`;
 }
 
-function waypointsDerivativeFormulaText(waypoints, useGamePrecision = false, includeYPrimePrefix = true, order = 1) {
-  if (waypoints.length < 2) return null;
-  if (order !== 1) {
-    return includeYPrimePrefix ? "y''=0" : "0";
+function waypointsDerivativeFormulaText(waypoints, useGamePrecision = false, includeYPrefix = true, order = 1) {
+  const expr = waypointsFormulaText(waypoints, useGamePrecision, false);
+  if (!expr) return null;
+  let body = deriveWithMathJS(expr, order);
+  if (!body) {
+    const parts = [];
+    for (let i = 0; i < waypoints.length - 1; i++) {
+      parts.push(directLineDerivativeFormula(waypoints[i], waypoints[i + 1], useGamePrecision));
+    }
+    body = normalizeFormula(parts.join(" + "));
   }
-  const parts = [];
-  for (let i = 0; i < waypoints.length - 1; i++) {
-    parts.push(directLineDerivativeFormula(waypoints[i], waypoints[i + 1], useGamePrecision));
-  }
-  const body = normalizeFormula(parts.join(" + "));
   if (!body || body === "0") {
-    return includeYPrimePrefix ? "y'=0" : "0";
+    return includeYPrefix ? (order === 1 ? "y'=0" : "y''=0") : "0";
   }
-  return includeYPrimePrefix ? `y'=${body.replace(/^y'=/, "")}` : body;
+  const prefix = order === 1 ? "y'" : "y''";
+  return includeYPrefix ? `${prefix}=${body.replace(new RegExp(`^${prefix}=`), "")}` : body;
 }
 
 function waypointsFormulaText(waypoints, useGamePrecision = false, includeYPrefix = true) {
@@ -1969,10 +1972,21 @@ function clickFormulaText(waypoints) {
 }
 
 function linearDerivativeFormulaText(waypoints, useGamePrecision = false, order = 1) {
-  return waypointsDerivativeFormulaText(waypoints, useGamePrecision, true, order);
+  const expr = linearFormulaText(waypoints);
+  if (!expr) return null;
+  let body = deriveWithMathJS(expr, order);
+  if (!body) return waypointsDerivativeFormulaText(waypoints, useGamePrecision, true, order);
+  const prefix = order === 1 ? "y'" : "y''";
+  return `${prefix}=${body.replace(new RegExp(`^${prefix}=`), "")}`;
 }
 function clickDerivativeFormulaText(waypoints, order = 1) {
-  return waypointsDerivativeFormulaText(waypoints, true, false, order);
+  if (waypoints.length < 2) return null;
+  const expr = clickFormulaText(waypoints);
+  if (!expr) return null;
+  let body = deriveWithMathJS(expr, order);
+  if (!body) return order === 1 ? "y'=0" : "y''=0";
+  const prefix = order === 1 ? "y'" : "y''";
+  return `${prefix}=${body.replace(new RegExp(`^${prefix}=`), "")}`;
 }
 
 function getActiveFormulaText() {
@@ -2011,36 +2025,25 @@ function getActiveFormulaText() {
 
 function getActiveDerivativeText(order) {
   if (order !== 1 && order !== 2) return null;
-  if (params.inputMode === "click") {
-    if (clickWaypoints.length < 2) return null;
-    return clickDerivativeFormulaText(clickWaypoints, order);
-  }
-
-  if (params.inputMode === "dot") {
-    const path = dotEvolution?.bestEver?.path;
-    if (!path || path.length < 2) return null;
-    if (params.dotTrajectory === "spline" && typeof CubicSplineModel === "function" && splineModel) {
-      const decimals = Math.max(
-        8,
-        Math.min(14, Math.round(Number(params.splineFormulaPrecision) || 14))
-      );
-      const splineFormula = splineModel.toDerivativeFormulaText(order, decimals);
-      return splineFormula ? splineFormula : null;
+  if (!formula) {
+    const expr = getActiveFormulaText();
+    if (expr) {
+      const body = deriveWithMathJS(expr, order);
+      if (body) {
+        const prefix = order === 1 ? "y'" : "y''";
+        formula = `${prefix}=${body.replace(new RegExp(`^${prefix}=`), "")}`;
+      }
     }
-    return clickDerivativeFormulaText(path, order);
   }
-
-  if (trainingData.length < 2) return null;
-  let formula = null;
-  if (params.approxMethod === "linear") {
-    formula = linearDerivativeFormulaText(linearWaypoints, false, order);
-  } else if (params.approxMethod === "spline" && splineModel) {
-    formula = splineModel.toDerivativeFormulaText(
-      order,
-      Math.max(8, Math.min(14, Math.round(Number(params.splineFormulaPrecision) || 14)))
-    );
-  } else if (network && typeof network.toDesmosDerivativeText === "function" && network.supportsDerivative(order)) {
-    formula = network.toDesmosDerivativeText(order);
+  if (!formula) {
+    const expr = getActiveFormulaText();
+    if (expr) {
+      const body = deriveWithMathJS(expr, order);
+      if (body) {
+        const prefix = order === 1 ? "y'" : "y''";
+        formula = `${prefix}=${body.replace(new RegExp(`^${prefix}=`), "")}`;
+      }
+    }
   }
   return formula ? normalizeFormula(formula) : null;
 }
