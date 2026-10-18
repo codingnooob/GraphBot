@@ -871,6 +871,7 @@ function onParamChange(event) {
   if (!changedKey) return;
   if (input.type === "radio" && !input.checked) return;
 
+  clearDerivativeCache();
   const prevInputMode = params.inputMode;
   const prevMethod = params.approxMethod;
   const prevValue = params[changedKey];
@@ -1763,6 +1764,7 @@ function clearWorkspaceState({ keepAnchor = true } = {}) {
   dotEvolution = null;
   dotGenerationStartedAt = 0;
   if (keepAnchor) seedAnchorPoints();
+  clearDerivativeCache();
   updateStatusPanel();
   updateCopyButton();
   updateDotButtons();
@@ -1917,6 +1919,28 @@ function directLineFormula(p1, p2, useGamePrecision = false) {
   return `${dist}*(abs(x - ${x1}) - abs(x - ${x2}))`;
 }
 
+/**
+ * Analytic first derivative of a single click/linear segment.
+ * y_segment = d * (abs(x - x1) - abs(x - x2))  where d = m/2
+ * y'_segment  = d * ((x - x1)/abs(x - x1) - (x - x2)/abs(x - x2))
+ * This yields the slope m inside the interval and 0 outside it.
+ * The second derivative of a piecewise-linear function is 0 almost everywhere.
+ */
+function directLineDerivativeFormula(p1, p2, useGamePrecision = false) {
+  const round = useGamePrecision ? fmtGame : roundCoord;
+  const x1 = round(p1.x);
+  const x2 = round(p2.x);
+  const y1 = round(p1.y);
+  const y2 = round(p2.y);
+  let dx = x2 - x1;
+  if (Math.abs(dx) < 1e-12) {
+    dx = y1 !== y2 ? verticalEps(y1, y2) : VERTICAL_MIN_EPS;
+  }
+  const m = (y2 - y1) / dx;
+  const d = round(m / 2);
+  return `${d}*((x - ${x1})/abs(x - ${x1}) - (x - ${x2})/abs(x - ${x2}))`;
+}
+
 function deriveWithMathJS(expr, order, decimals = 14) {
   if (!window.math) return null;
   try {
@@ -1936,21 +1960,34 @@ function deriveWithMathJS(expr, order, decimals = 14) {
 }
 
 function waypointsDerivativeFormulaText(waypoints, useGamePrecision = false, includeYPrefix = true, order = 1) {
+  if (!waypoints || waypoints.length < 2) return null;
+  if (order !== 1 && order !== 2) return null;
+
+  // Piecewise-linear functions have a zero second derivative almost everywhere.
+  if (order === 2) {
+    return includeYPrefix ? "y''=0" : "0";
+  }
+
+  // Fast analytic path: sum of per-segment sign-based derivatives.
+  const parts = [];
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    parts.push(directLineDerivativeFormula(waypoints[i], waypoints[i + 1], useGamePrecision));
+  }
+  const body = normalizeFormula(parts.join(" + "));
+  if (body && body !== "0") {
+    const prefix = order === 1 ? "y'" : "y''";
+    return includeYPrefix ? `${prefix}=${body}` : body;
+  }
+
+  // Fall back to math.js symbolic differentiation if the analytic path yields nothing.
   const expr = waypointsFormulaText(waypoints, useGamePrecision, false);
   if (!expr) return null;
-  let body = deriveWithMathJS(expr, order);
-  if (!body) {
-    const parts = [];
-    for (let i = 0; i < waypoints.length - 1; i++) {
-      parts.push(directLineDerivativeFormula(waypoints[i], waypoints[i + 1], useGamePrecision));
-    }
-    body = normalizeFormula(parts.join(" + "));
-  }
-  if (!body || body === "0") {
+  const mjsBody = deriveWithMathJS(expr, order);
+  if (!mjsBody) {
     return includeYPrefix ? (order === 1 ? "y'=0" : "y''=0") : "0";
   }
   const prefix = order === 1 ? "y'" : "y''";
-  return includeYPrefix ? `${prefix}=${body.replace(new RegExp(`^${prefix}=`), "")}` : body;
+  return includeYPrefix ? `${prefix}=${mjsBody.replace(new RegExp(`^${prefix}=`), "")}` : mjsBody;
 }
 
 function waypointsFormulaText(waypoints, useGamePrecision = false, includeYPrefix = true) {
@@ -1972,18 +2009,27 @@ function clickFormulaText(waypoints) {
 }
 
 function linearDerivativeFormulaText(waypoints, useGamePrecision = false, order = 1) {
+  if (!waypoints || waypoints.length < 2) return null;
+  // Fast analytic path for piecewise-linear functions.
+  const analytic = waypointsDerivativeFormulaText(waypoints, useGamePrecision, true, order);
+  if (analytic) return analytic;
+  // Fall back to math.js symbolic differentiation.
   const expr = linearFormulaText(waypoints);
   if (!expr) return null;
-  let body = deriveWithMathJS(expr, order);
-  if (!body) return waypointsDerivativeFormulaText(waypoints, useGamePrecision, true, order);
+  const body = deriveWithMathJS(expr, order);
+  if (!body) return order === 1 ? "y'=0" : "y''=0";
   const prefix = order === 1 ? "y'" : "y''";
   return `${prefix}=${body.replace(new RegExp(`^${prefix}=`), "")}`;
 }
 function clickDerivativeFormulaText(waypoints, order = 1) {
   if (waypoints.length < 2) return null;
+  // Fast analytic path for piecewise-linear click-mode functions.
+  const analytic = waypointsDerivativeFormulaText(waypoints, true, false, order);
+  if (analytic) return analytic;
+  // Fall back to math.js symbolic differentiation.
   const expr = clickFormulaText(waypoints);
   if (!expr) return null;
-  let body = deriveWithMathJS(expr, order);
+  const body = deriveWithMathJS(expr, order);
   if (!body) return order === 1 ? "y'=0" : "y''=0";
   const prefix = order === 1 ? "y'" : "y''";
   return `${prefix}=${body.replace(new RegExp(`^${prefix}=`), "")}`;
@@ -2023,30 +2069,116 @@ function getActiveFormulaText() {
   return formula ? normalizeFormula(formula) : null;
 }
 
+// Derivative result cache. Keyed by (formulaText, order). Self-invalidating:
+// when the underlying state changes, getActiveFormulaText() returns a
+// different string and we get a cache miss. Capped to avoid unbounded growth.
+const DERIVATIVE_CACHE_MAX = 64;
+const derivativeCache = new Map();
+const derivativeCacheKeys = [];
+
+function clearDerivativeCache() {
+  derivativeCache.clear();
+  derivativeCacheKeys.length = 0;
+}
+
 function getActiveDerivativeText(order) {
   if (order !== 1 && order !== 2) return null;
-  let formula = null;
-  if (!formula) {
-    const expr = getActiveFormulaText();
-    if (expr) {
-      const body = deriveWithMathJS(expr, order);
-      if (body) {
-        const prefix = order === 1 ? "y'" : "y''";
-        formula = `${prefix}=${body.replace(new RegExp(`^${prefix}=`), "")}`;
-      }
+
+  const expr = getActiveFormulaText();
+  if (!expr) return null;
+
+  const cacheKey = `${expr}|${order}`;
+  const cached = derivativeCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  let result = null;
+
+  // --- Analytic derivative paths (fast, no symbolic parsing) ---
+
+  // Sigmoid network: w·σ(k·(x−x0)) → w·k·σ·(1−σ) / w·k²·σ·(1−σ)·(1−2σ)
+  if (
+    params.inputMode === "draw" &&
+    params.approxMethod === "sigmoid" &&
+    network &&
+    typeof network.toDesmosDerivativeText === "function"
+  ) {
+    const analytic = network.toDesmosDerivativeText(order, 0.005);
+    if (analytic) result = analytic;
+  }
+  // Cubic / B-spline: analytic piecewise-cubic derivative formulas.
+  else if (
+    (params.inputMode === "draw" || params.inputMode === "dot") &&
+    params.approxMethod === "spline" &&
+    splineModel &&
+    typeof splineModel.toDerivativeFormulaText === "function"
+  ) {
+    const decimals = Math.max(
+      8,
+      Math.min(14, Math.round(Number(params.splineFormulaPrecision) || 14))
+    );
+    const analytic = splineModel.toDerivativeFormulaText(order, decimals);
+    if (analytic) result = analytic;
+  }
+  // Taylor / polynomial (no hidden layers): analytic coefficient differentiation.
+  else if (
+    params.inputMode === "draw" &&
+    params.approxMethod === "taylor" &&
+    network instanceof TaylorNetwork &&
+    network.numHiddenLayers === 0
+  ) {
+    const coeffs = network.expandedXPowers(0.005);
+    if (coeffs) {
+      const dcoeffs = derivativeCoeffs(coeffs, order);
+      if (dcoeffs) result = taylorPolyDesmos(dcoeffs, 0.005, order);
     }
   }
-  if (!formula) {
-    const expr = getActiveFormulaText();
-    if (expr) {
-      const body = deriveWithMathJS(expr, order);
-      if (body) {
-        const prefix = order === 1 ? "y'" : "y''";
-        formula = `${prefix}=${body.replace(new RegExp(`^${prefix}=`), "")}`;
-      }
+  // Fourier (no hidden layers): analytic term-by-term differentiation.
+  else if (
+    params.inputMode === "draw" &&
+    params.approxMethod === "fourier" &&
+    network instanceof FourierNetwork &&
+    network.numHiddenLayers === 0
+  ) {
+    const analytic = fourierLinearDerivativeDesmos(network, order, 0.005);
+    if (analytic) result = analytic;
+  }
+  // Click / linear: analytic piecewise-linear segment derivatives.
+  else if (
+    params.inputMode === "click" ||
+    params.approxMethod === "linear"
+  ) {
+    const waypoints =
+      params.inputMode === "click" ? clickWaypoints : linearWaypoints;
+    if (waypoints && waypoints.length >= 2) {
+      const analytic = waypointsDerivativeFormulaText(
+        waypoints,
+        params.inputMode === "click",
+        true,
+        order
+      );
+      if (analytic) result = analytic;
     }
   }
-  return formula ? normalizeFormula(formula) : null;
+
+  // --- Fallback: math.js symbolic differentiation ---
+  if (!result) {
+    const body = deriveWithMathJS(expr, order);
+    if (!body) return null;
+    const prefix = order === 1 ? "y'" : "y''";
+    result = `${prefix}=${body.replace(new RegExp(`^${prefix}=`), "")}`;
+  }
+
+  result = normalizeFormula(result);
+
+  // Cache with size cap (evict oldest).
+  if (derivativeCache.size >= DERIVATIVE_CACHE_MAX) {
+    const oldest = derivativeCacheKeys.shift();
+    if (oldest !== undefined) derivativeCache.delete(oldest);
+  }
+  derivativeCache.set(cacheKey, result);
+  derivativeCacheKeys.push(cacheKey);
+
+  return result;
 }
 
 function methodLabel(method = params.approxMethod) {

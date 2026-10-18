@@ -203,7 +203,7 @@ class SigmoidNetwork {
       if (order === 1) parts.push(`${w}*${k}*${sig}*(1-${sig})`);
       else parts.push(`${w}*${k}^2*${sig}*(1-${sig})*(1-2*${sig})`);
     }
-    return parts.length > 0 ? `y=${parts.join("+")}` : "y=0";
+    return parts.length > 0 ? `${order === 1 ? "y'" : "y''"}=${parts.join("+")}` : `${order === 1 ? "y'" : "y''"}=0`;
   }
 }
 
@@ -533,7 +533,7 @@ class FeatureMlpNetwork {
       if (!coeffs) return null;
       const dcoeffs = derivativeCoeffs(coeffs, order);
       if (!dcoeffs) return null;
-      return taylorPolyDesmos(dcoeffs, minWeight);
+      return taylorPolyDesmos(dcoeffs, minWeight, order);
     }
     if (this instanceof FourierNetwork) {
       return fourierLinearDerivativeDesmos(this, order, minWeight);
@@ -881,4 +881,99 @@ function sampleYFromData(data, x) {
   }
 
   return data[data.length - 1].y;
+}
+
+/**
+ * Compute the nth derivative coefficients of a polynomial given its
+ * expanded x-power coefficients. order=1 → d[j] += coeffs[j+1]*(j+1),
+ * order=2 → d[j] += coeffs[j+2]*(j+2)*(j+1).
+ */
+function derivativeCoeffs(coeffs, order) {
+  const d = new Array(coeffs.length).fill(0);
+  if (order <= 0) return coeffs.slice();
+  for (let i = 0; i < coeffs.length; i++) {
+    let val = coeffs[i];
+    for (let k = 0; k < order; k++) val = val * (i - k);
+    const idx = i - order;
+    if (idx >= 0 && idx < d.length) d[idx] += val;
+  }
+  return d;
+}
+
+/**
+ * Convert derivative coefficients into a Desmos-compatible equation string
+ * with the appropriate y' / y'' prefix. Mirrors xPolynomialDesmosText but
+ * prefixes with the derivative variable name.
+ */
+function taylorPolyDesmos(coeffs, minWeight = 0.005, order = 1) {
+  const parts = [];
+  const prefix = order === 1 ? "y'" : "y''";
+  for (let i = 0; i < coeffs.length; i++) {
+    if (!Number.isFinite(coeffs[i]) || Math.abs(coeffs[i]) < minWeight) continue;
+    const c = round3(coeffs[i]);
+    if (c === null) continue;
+    if (i === 0) parts.push(`${c}`);
+    else if (i === 1) parts.push(`${c}*x`);
+    else parts.push(`${c}*x^${i}`);
+  }
+  return parts.length > 0 ? `${prefix}=${parts.join("+")}` : `${prefix}=0`;
+}
+
+/**
+ * Analytic first/second derivative of a zero-hidden-layer Fourier network.
+ * y = w0 + Σ [w_c_k * cos(k*PI*t) + w_s_k * sin(k*PI*t)], t = (x-c)/s
+ * y' = (1/s) * Σ k*PI * [-w_c_k * sin(k*PI*t) + w_s_k * cos(k*PI*t)]
+ * y'' = (1/s^2) * Σ (k*PI)^2 * [-w_c_k * cos(k*PI*t) - w_s_k * sin(k*PI*t)]
+ */
+function fourierLinearDerivativeDesmos(network, order = 1, minWeight = 0.005) {
+  if (!network || network.layers.length === 0) return null;
+  const last = network.layers[network.layers.length - 1];
+  const W = last.W[0];
+  const t = network.desmosTVar();
+  const invS = 1 / network.scale;
+  const prefix = order === 1 ? "y'" : "y''";
+  const parts = [];
+
+  // W[0] is the constant bias (derivative is zero), skip it.
+  // W[1] = cos(1·angle), W[2] = sin(1·angle), W[3] = cos(2·angle), ...
+  let idx = 1;
+  for (let k = 1; k <= network.harmonics; k++) {
+    const kcoeff = round4(k * FOURIER_PI);
+    if (kcoeff === null || Math.abs(kcoeff) < 1e-9) {
+      idx += 2;
+      continue;
+    }
+    const angle = `${kcoeff}*(${t})`;
+    const wc = W[idx];
+    const ws = W[idx + 1];
+    idx += 2;
+
+    if (order === 1) {
+      // d/dx cos(angle) = -(kcoeff/s) * sin(angle)
+      // d/dx sin(angle) =  (kcoeff/s) * cos(angle)
+      if (wc !== null && Math.abs(wc) >= minWeight) {
+        const c = round3(wc * kcoeff * invS);
+        if (c !== null) parts.push(`${c}*(-sin(${angle}))`);
+      }
+      if (ws !== null && Math.abs(ws) >= minWeight) {
+        const c = round3(ws * kcoeff * invS);
+        if (c !== null) parts.push(`${c}*cos(${angle})`);
+      }
+    } else {
+      // d²/dx² cos(angle) = -(kcoeff/s)² * cos(angle)
+      // d²/dx² sin(angle) = -(kcoeff/s)² * sin(angle)
+      const k2 = kcoeff * kcoeff;
+      const invS2 = invS * invS;
+      if (wc !== null && Math.abs(wc) >= minWeight) {
+        const c = round3(wc * k2 * invS2);
+        if (c !== null) parts.push(`${c}*(-cos(${angle}))`);
+      }
+      if (ws !== null && Math.abs(ws) >= minWeight) {
+        const c = round3(ws * k2 * invS2);
+        if (c !== null) parts.push(`${c}*(-sin(${angle}))`);
+      }
+    }
+  }
+
+  return parts.length > 0 ? `${prefix}=${normalizeFormula(parts.join("+"))}` : `${prefix}=0`;
 }
