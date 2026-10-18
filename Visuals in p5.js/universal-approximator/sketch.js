@@ -1839,7 +1839,8 @@ function evalDirectLineSegment(p1, p2, x) {
   if (Math.abs(dx) < 1e-12) {
     dx = y1 !== y2 ? 1e-6 : 1e-6;
   }
-  const dist = -((y1 - y2) / 2) / dx;
+  const m = (y2 - y1) / dx;
+  const dist = m / 2;
   return dist * (Math.abs(x - x1) - Math.abs(x - x2));
 }
 
@@ -1911,7 +1912,8 @@ function directLineFormula(p1, p2, useGamePrecision = false) {
   if (Math.abs(dx) < 1e-12) {
     dx = y1 !== y2 ? verticalEps(y1, y2) : VERTICAL_MIN_EPS;
   }
-  const dist = round(-((y1 - y2) / 2) / dx);
+  const m = (y2 - y1) / dx;
+  const dist = round(m / 2);
   return `${dist}*(abs(x - ${x1}) - abs(x - ${x2}))`;
 }
 

@@ -268,16 +268,12 @@ function piecewiseCubicDerivativeFormulaText(intervals, order = 1, decimals = 14
     const c1 = 3 * first.d;
     terms.push(splinePolynomial(a1, b1, c1, 0, `x - ${baseX}`, decimals));
     for (let i = 1; i < intervals.length; i++) {
-      const prev = intervals[i - 1];
-      const cur = intervals[i];
-      const t = cur.x - prev.x;
-      const y1_left = prev.b + 2 * prev.c * t + 3 * prev.d * t * t;
-      const y1_right = cur.b;
-      const jump = y1_right - y1_left;
-      if (Math.abs(jump) < 10 ** (-(decimals + 1))) continue;
-      const knot = splineNumber(cur.x, decimals);
+      const deltaD = intervals[i].d - intervals[i - 1].d;
+      if (Math.abs(deltaD) < 10 ** (-(decimals + 1))) continue;
+      const coeff = 3 * deltaD;
+      const knot = splineNumber(intervals[i].x, decimals);
       const positivePart = `((x - ${knot}) + abs(x - ${knot}))/2`;
-      terms.push(`${splineNumber(jump, decimals)}*(${positivePart})`);
+      terms.push(`${splineNumber(coeff, decimals)}*(${positivePart})^2`);
     }
     return terms.length > 0 ? `y'=${normalizeSplineFormula(terms.join(" + "))}` : null;
   } else if (order === 2) {
@@ -285,16 +281,12 @@ function piecewiseCubicDerivativeFormulaText(intervals, order = 1, decimals = 14
     const b2 = 6 * first.d;
     terms.push(splinePolynomial(a2, b2, 0, 0, `x - ${baseX}`, decimals));
     for (let i = 1; i < intervals.length; i++) {
-      const prev = intervals[i - 1];
-      const cur = intervals[i];
-      const t = cur.x - prev.x;
-      const y2_left = 2 * prev.c + 6 * prev.d * t;
-      const y2_right = 2 * cur.c;
-      const jump = y2_right - y2_left;
-      if (Math.abs(jump) < 10 ** (-(decimals + 1))) continue;
-      const knot = splineNumber(cur.x, decimals);
+      const deltaD = intervals[i].d - intervals[i - 1].d;
+      if (Math.abs(deltaD) < 10 ** (-(decimals + 1))) continue;
+      const coeff = 6 * deltaD;
+      const knot = splineNumber(intervals[i].x, decimals);
       const positivePart = `((x - ${knot}) + abs(x - ${knot}))/2`;
-      terms.push(`${splineNumber(jump, decimals)}*(${positivePart})`);
+      terms.push(`${splineNumber(coeff, decimals)}*(${positivePart})`);
     }
     return terms.length > 0 ? `y''=${normalizeSplineFormula(terms.join(" + "))}` : null;
   }
