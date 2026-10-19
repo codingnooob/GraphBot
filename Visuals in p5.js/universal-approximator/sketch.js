@@ -1881,14 +1881,18 @@ function buildWeightedTrainingData(data) {
   const anchor = activeAnchor.point;
   const dataMinX = data[0].x;
   const dataMaxX = data[data.length - 1].x;
-  // Do not extend a stroke back to the soldier. If drawing starts elsewhere,
-  // A is outside the stroke's x-domain and should not affect its fit.
-  if (anchor.x < dataMinX - 1e-9 || anchor.x > dataMaxX + 1e-9) {
-    return data.map((point) => clonePoint(point));
-  }
 
   const weighted = [];
   let anchorIncluded = false;
+
+  // Anchor the fit at the soldier's position when drawing starts to the right
+  // of A, so Taylor/Fourier/sigmoid curves begin at the active soldier.
+  if (anchor.x < dataMinX - 1e-9) {
+    for (let i = 0; i < ACTIVE_ANCHOR_WEIGHT; i++) {
+      weighted.push({ x: anchor.x, y: anchor.y });
+    }
+  }
+
   for (const point of data) {
     const isAnchor =
       Math.abs(point.x - anchor.x) <= 1e-9 &&
@@ -1897,10 +1901,12 @@ function buildWeightedTrainingData(data) {
     const copies = isAnchor ? ACTIVE_ANCHOR_WEIGHT : 1;
     for (let i = 0; i < copies; i++) weighted.push(clonePoint(point));
   }
-  if (!anchorIncluded) {
+
+  if (!anchorIncluded && anchor.x >= dataMinX - 1e-9 && anchor.x <= dataMaxX + 1e-9) {
     for (let i = 0; i < ACTIVE_ANCHOR_WEIGHT; i++) weighted.push(clonePoint(anchor));
     weighted.sort((a, b) => a.x - b.x);
   }
+
   return weighted;
 }
 
@@ -2307,7 +2313,10 @@ function createAnimatedNetwork() {
   trainingData = buildTrainingData(drawnPoints);
   if (trainingData.length < 2) return null;
   syncLinearWaypointsFromDataset();
-  approxXMin = trainingData[0].x;
+  const anchorLeadsLeft = activeAnchor && activeAnchor.point.x < trainingData[0].x - 1e-9;
+  approxXMin = anchorLeadsLeft && usesFeatureNetwork()
+    ? activeAnchor.point.x
+    : trainingData[0].x;
   approxXMax = trainingData[trainingData.length - 1].x;
   linearMse = computeMseOnData((x) => evalLinearWaypoints(linearWaypoints, x), trainingData);
   splineModel = null;
@@ -2619,7 +2628,10 @@ function processPipeline({ logFormula = false } = {}) {
   }
 
   syncLinearWaypointsFromDataset();
-  approxXMin = trainingData[0].x;
+  const anchorLeadsLeft = activeAnchor && activeAnchor.point.x < trainingData[0].x - 1e-9;
+  approxXMin = anchorLeadsLeft && usesFeatureNetwork()
+    ? activeAnchor.point.x
+    : trainingData[0].x;
   approxXMax = trainingData[trainingData.length - 1].x;
   linearMse = computeMseOnData((x) => evalLinearWaypoints(linearWaypoints, x), trainingData);
 
