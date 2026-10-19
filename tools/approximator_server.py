@@ -23,6 +23,29 @@ except Exception:
     jsonify = None
     HAS_FLASK = False
 
+# Optional symbolic engines for /api/derive.  The server must still import and
+# serve captures when these are unavailable.
+USE_SYMENGINE = False
+se = None
+try:
+    import symengine as se
+    USE_SYMENGINE = True
+except Exception:
+    se = None
+    USE_SYMENGINE = False
+
+USE_SYMPY = False
+symbols = None
+sympify = None
+diff = None
+simplify = None
+try:
+    from sympy import symbols as _symbols, sympify as _sympify, diff as _diff, simplify as _simplify
+    symbols, sympify, diff, simplify = _symbols, _sympify, _diff, _simplify
+    USE_SYMPY = True
+except Exception:
+    USE_SYMPY = False
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -175,7 +198,6 @@ def parse_args():
     return parser.parse_args()
 
 
-@app.post('/api/derive')
 def derive():
     try:
         data = request.get_json(silent=True) or {}
@@ -211,6 +233,10 @@ def derive():
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)[:200]})
 
+
+
+if HAS_FLASK and app is not None:
+    app.add_url_rule("/api/derive", "derive", derive, methods=["POST"])
 
 
 def main():
