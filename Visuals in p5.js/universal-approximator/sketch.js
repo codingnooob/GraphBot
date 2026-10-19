@@ -2803,5 +2803,4 @@ function keyPressed() {
 
 function mouseInsideCanvas() {
   return mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height;
-}\n
-\n//x\n
+}
