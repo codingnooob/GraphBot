@@ -106,9 +106,9 @@ let approxXMax = null;
 let isDrawing = false;
 let controlsEl;
 let statusMseEl;
+let copyFormulaBtnEl;
+let copyFormulaKindEl;
 let copyYBtnEl;
-let copyY1BtnEl;
-let copyY2BtnEl;
 let copyBtnEl;
 let captureBtnEl;
 let recordTrainingBtnEl;
@@ -512,9 +512,12 @@ ${actionButton("btn-dot-add-enemies", "Add detected enemies", { secondary: true 
 
   controlsEl.innerHTML = `
     <div class="copy-group">
-      ${actionButton("btn-copy-y", "Copy y", { disabled: true })}
-      ${actionButton("btn-copy-y1", "Copy y'", { disabled: true })}
-      ${actionButton("btn-copy-y2", "Copy y''", { disabled: true })}
+      <select id="copy-formula-kind" class="copy-kind-select" aria-label="Formula to copy">
+        <option value="0">y</option>
+        <option value="1">y'</option>
+        <option value="2">y''</option>
+      </select>
+      ${actionButton("btn-copy-formula", "Copy formula", { disabled: true })}
     </div>
     <h2>Parameters</h2>
     ${actionButton("btn-capture-field", "Capture field")}
@@ -566,21 +569,18 @@ if (dotAddEnemiesBtn) dotAddEnemiesBtn.addEventListener("click", () => {
   applyEnemyDetectionPreference();
 });
   document.getElementById("btn-reset").addEventListener("click", resetParams);
-  copyYBtnEl = document.getElementById("btn-copy-y");
-  copyYBtnEl.addEventListener("click", (event) => {
-    event.preventDefault();
-    copyActiveFormula();
-  });
-  copyY1BtnEl = document.getElementById("btn-copy-y1");
-  copyY1BtnEl.addEventListener("click", (event) => {
-    event.preventDefault();
-    copyDerivative(1);
-  });
-  copyY2BtnEl = document.getElementById("btn-copy-y2");
-  copyY2BtnEl.addEventListener("click", (event) => {
-    event.preventDefault();
-    copyDerivative(2);
-  });
+  copyFormulaBtnEl = document.getElementById("btn-copy-formula");
+  copyFormulaKindEl = document.getElementById("copy-formula-kind");
+  copyYBtnEl = copyFormulaBtnEl;
+  if (copyFormulaBtnEl) {
+    copyFormulaBtnEl.addEventListener("click", (event) => {
+      event.preventDefault();
+      copySelectedFormula();
+    });
+  }
+  if (copyFormulaKindEl) {
+    copyFormulaKindEl.addEventListener("change", () => updateCopyButton());
+  }
   captureBtnEl = document.getElementById("btn-capture-field");
   captureBtnEl.addEventListener("click", (event) => {
     event.preventDefault();
@@ -2259,11 +2259,29 @@ async function copyDerivative(order) {
   }, 1200);
 }
 
+async function copySelectedFormula() {
+  const kind = copyFormulaKindEl ? Number(copyFormulaKindEl.value || 0) : 0;
+  const btn = copyFormulaBtnEl || copyYBtnEl;
+  if (!btn) return;
+  const formula = kind === 0 ? getActiveFormulaText() : getActiveDerivativeText(kind);
+  if (!formula) return;
+  const prev = btn.textContent;
+  try {
+    await navigator.clipboard.writeText(formula);
+    btn.textContent = "Copied";
+  } catch {
+    btn.textContent = "Error";
+  }
+  setTimeout(() => {
+    if (btn) btn.textContent = prev;
+  }, 1200);
+}
+
 function updateCopyButton() {
-  if (!copyYBtnEl) return;
-  setActionDisabled(copyYBtnEl, getActiveFormulaText() === null, copyUnavailableReason());
-  if (copyY1BtnEl) setActionDisabled(copyY1BtnEl, getActiveDerivativeText(1) === null, copyUnavailableReason());
-  if (copyY2BtnEl) setActionDisabled(copyY2BtnEl, getActiveDerivativeText(2) === null, copyUnavailableReason());
+  if (!copyFormulaBtnEl) return;
+  const kind = copyFormulaKindEl ? Number(copyFormulaKindEl.value || 0) : 0;
+  const available = kind === 0 ? getActiveFormulaText() : getActiveDerivativeText(kind);
+  setActionDisabled(copyFormulaBtnEl, available === null, copyUnavailableReason());
 }
 
 function updateCaptureButton() {

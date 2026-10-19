@@ -187,6 +187,17 @@ canvas {
   margin-bottom: 12px;
 }
 
+.copy-kind-select {
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 8px 10px;
+  border: 1px solid #4d6385;
+  border-radius: 4px;
+  background: #16191f;
+  color: #d8e5f7;
+  font-size: 13px;
+}
+
 .action-control {
   position: relative;
   display: block;
