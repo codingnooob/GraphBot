@@ -1,2 +1,0 @@
-C:\Users\Tyron\GraphBot\run_perf_analysis.py:259: SyntaxWarning: invalid escape sequence '\S'
-  '.venv\Scripts\python.exe', '-m', 'unittest', 'discover', '-s', 'tests', '-v'

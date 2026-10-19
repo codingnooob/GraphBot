@@ -1,4 +1,0 @@
-derivativeCoeffs order=1 (poly5): 1.38 ms total, 0.277 μs/op (5000 iters)
-derivativeCoeffs order=2 (poly5): 1.73 ms total, 0.346 μs/op (5000 iters)
-mathjs order=1 (poly6): 2867.46 ms total, 14337.320 μs/op (200 iters)
-mathjs order=2 (poly6): 3396.95 ms total, 22646.343 μs/op (150 iters)
